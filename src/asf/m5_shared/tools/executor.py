@@ -30,17 +30,181 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/tools/test_executor.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/tools/executor.py` and `uv run mypy src/asf/m5_shared/tools/executor.py` are clean.
 
+import time
+from types import SimpleNamespace
+from typing import Any
+
 from langchain_core.tools import BaseTool
 
+from asf.contracts.errors import ApprovalRequired, PolicyDenied, SandboxUnavailable  # noqa: F401
 from asf.contracts.tools import SandboxTier, ToolInvocation, ToolResult
+from asf.m5_shared.decisions.broker import DecisionBroker
+from asf.m5_shared.events.redaction import redact_text
+from asf.m5_shared.metrics.collector import MetricsCollector
+from asf.m5_shared.tools.policy import PolicyEngine, Verdict
+from asf.m5_shared.tools.registry import ToolRegistry
+from asf.platform.select import get_platform
+
+
+class _DelegatingTool(BaseTool):
+    name: str
+    description: str
+    _executor: "ToolExecutor"
+    _role: str
+    _task_id: str | None
+    _allowed_files: list[str]
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        executor: "ToolExecutor",
+        role: str,
+        task_id: str | None,
+        allowed_files: list[str],
+    ) -> None:
+        super().__init__(name=name, description=description)
+        self._executor = executor
+        self._role = role
+        self._task_id = task_id
+        self._allowed_files = allowed_files
+
+    def _run(self, **kwargs: Any) -> Any:
+        inv = ToolInvocation(
+            tool=self.name,
+            args=kwargs,
+            role=self._role,
+            task_id=self._task_id,  # type: ignore[arg-type]
+            workspace_dir=".",
+        )
+        res = self._executor.invoke(inv, self._allowed_files)
+        return res.output
 
 
 class ToolExecutor:
-    def invoke(self, invocation: ToolInvocation, allowed_files: list[str]) -> ToolResult:
-        raise NotImplementedError
+    registry: ToolRegistry
+    policy: PolicyEngine
+    broker: DecisionBroker | None
+    collector: MetricsCollector | None
+    tier: SandboxTier | None
 
-    def wrap_for_langchain(self, role: str, task_id: str | None, allowed_files: list[str]) -> list[BaseTool]:
-        raise NotImplementedError
+    def __init__(
+        self,
+        registry: ToolRegistry | None = None,
+        policy: PolicyEngine | None = None,
+        broker: DecisionBroker | None = None,
+        collector: MetricsCollector | None = None,
+        tier: SandboxTier | None = None,
+    ) -> None:
+        self.registry = registry or ToolRegistry()
+        self.policy = policy or PolicyEngine()
+        self.broker = broker
+        self.collector = collector
+        self.tier = tier
 
     def active_tier(self) -> SandboxTier:
-        raise NotImplementedError
+        if self.tier is not None:
+            return self.tier
+        return get_platform().sandbox().tier
+
+    def invoke(self, invocation: ToolInvocation, allowed_files: list[str]) -> ToolResult:
+        t0 = time.monotonic()
+        active_tier = self.active_tier()
+
+        try:
+            spec, fn = self.registry.get(invocation.tool)
+        except Exception:
+            return ToolResult(
+                tool=invocation.tool,
+                status="error",
+                exit_code=1,
+                output=f"Tool '{invocation.tool}' not found",
+                duration_ms=0,
+                sandbox_tier=active_tier,
+            )
+
+        verdict_obj = self.policy.check(invocation, spec, active_tier, allowed_files)
+        verdict_str = (
+            verdict_obj.verdict.value
+            if hasattr(verdict_obj.verdict, "value")
+            else str(verdict_obj.verdict)
+        )
+
+        if verdict_str == Verdict.DENY.value:
+            duration = int((time.monotonic() - t0) * 1000)
+            return ToolResult(
+                tool=invocation.tool,
+                status="denied",
+                exit_code=1,
+                output=verdict_obj.reason,
+                duration_ms=duration,
+                sandbox_tier=active_tier,
+            )
+
+        if verdict_str == Verdict.NEEDS_APPROVAL.value:
+            if self.broker is None:
+                duration = int((time.monotonic() - t0) * 1000)
+                return ToolResult(
+                    tool=invocation.tool,
+                    status="denied",
+                    exit_code=1,
+                    output=f"Approval required but no DecisionBroker available: {verdict_obj.reason}",
+                    duration_ms=duration,
+                    sandbox_tier=active_tier,
+                )
+
+        try:
+            raw_res = fn(**invocation.args)
+            status = "ok"
+            exit_code = 0
+        except Exception as err:
+            raw_res = str(err)
+            status = "error"
+            exit_code = 1
+
+        duration_ms = int((time.monotonic() - t0) * 1000)
+
+        # Sanitise, strip control characters, redact, truncate
+        text = str(raw_res)
+        sanitized = "".join(ch for ch in text if ch in "\n\t\r" or ord(ch) >= 32)
+        truncated = sanitized[:50000]
+        output = redact_text(truncated)
+
+        if self.collector is not None:
+            tool_metric = SimpleNamespace(
+                run_id="run-local",
+                task_id=invocation.task_id,
+                tool=invocation.tool,
+                duration_ms=duration_ms,
+                exit_status=status,
+            )
+            try:
+                self.collector.record_tool(tool_metric)  # type: ignore[arg-type]
+            except Exception as _coll_err:  # noqa: BLE001
+                _ = _coll_err
+
+        return ToolResult(
+            tool=invocation.tool,
+            status=status,
+            exit_code=exit_code,
+            output=output,
+            duration_ms=duration_ms,
+            sandbox_tier=active_tier,
+        )
+
+    def wrap_for_langchain(self, role: str, task_id: str | None, allowed_files: list[str]) -> list[BaseTool]:
+        specs = self.registry.specs_for(role)
+        tools: list[BaseTool] = []
+
+        for spec in specs:
+            tool = _DelegatingTool(
+                name=spec.name,
+                description=spec.description,
+                executor=self,
+                role=role,
+                task_id=task_id,
+                allowed_files=allowed_files,
+            )
+            tools.append(tool)
+
+        return tools
