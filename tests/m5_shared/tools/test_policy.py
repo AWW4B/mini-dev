@@ -19,17 +19,128 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/tools/test_policy.py` on Windows and Linux once src/asf/m5_shared/tools/policy.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/tools/test_policy.py` and `uv run mypy tests/m5_shared/tools/test_policy.py` are clean.
 
 
-from asf.m5_shared.tools.policy import PolicyEngine, PolicyVerdict, Verdict  # noqa: F401
+from pathlib import Path
+from types import SimpleNamespace
+
+from asf.m5_shared.tools.policy import PolicyEngine, PolicyVerdict, Verdict
 
 
 def test_verdict_meets_contract() -> None:
     """Prove Verdict behaves as declared in src/asf/m5_shared/tools/policy.py."""
-    raise NotImplementedError("write this test before implementing Verdict")
+    assert Verdict.ALLOW == "allow"
+    assert Verdict.DENY == "deny"
+    assert Verdict.NEEDS_APPROVAL == "needs_approval"
+
 
 def test_policy_verdict_meets_contract() -> None:
     """Prove PolicyVerdict behaves as declared in src/asf/m5_shared/tools/policy.py."""
-    raise NotImplementedError("write this test before implementing PolicyVerdict")
+    pv = PolicyVerdict(verdict=Verdict.ALLOW, reason="Approved")
+    assert pv.verdict == Verdict.ALLOW
+    assert pv.reason == "Approved"
 
-def test_policy_engine_meets_contract() -> None:
+    dumped = pv.model_dump()
+    loaded = PolicyVerdict.model_validate(dumped)
+    assert loaded == pv
+
+
+def test_policy_engine_meets_contract(tmp_path: Path) -> None:
     """Prove PolicyEngine behaves as declared in src/asf/m5_shared/tools/policy.py."""
-    raise NotImplementedError("write this test before implementing PolicyEngine")
+    engine = PolicyEngine()
+    ws_dir = str(tmp_path)
+
+    # Valid read tool
+    read_spec = SimpleNamespace(
+        name="read_file",
+        roles=["worker", "developer"],
+        destructive=False,
+        needs_network=False,
+        source="builtin",
+    )
+    inv_valid = SimpleNamespace(
+        tool="read_file",
+        args={"path": "main.py"},
+        role="worker",
+        workspace_dir=ws_dir,
+    )
+    res = engine.check(inv_valid, read_spec, "A", [])  # type: ignore[arg-type]
+    assert res.verdict == Verdict.ALLOW
+
+    # 1. Role mismatch
+    inv_wrong_role = SimpleNamespace(
+        tool="read_file",
+        args={"path": "main.py"},
+        role="reviewer",
+        workspace_dir=ws_dir,
+    )
+    res_role = engine.check(inv_wrong_role, read_spec, "A", [])  # type: ignore[arg-type]
+    assert res_role.verdict == Verdict.DENY
+    assert "role" in res_role.reason.lower()
+
+    # 2. Path escape
+    inv_escape = SimpleNamespace(
+        tool="read_file",
+        args={"path": "../../secret.txt"},
+        role="worker",
+        workspace_dir=ws_dir,
+    )
+    res_escape = engine.check(inv_escape, read_spec, "A", [])  # type: ignore[arg-type]
+    assert res_escape.verdict == Verdict.DENY
+    assert "escape" in res_escape.reason.lower() or "denied" in res_escape.reason.lower()
+
+    # 3. Path outside allowed_files
+    inv_not_allowed = SimpleNamespace(
+        tool="read_file",
+        args={"path": "other.py"},
+        role="worker",
+        workspace_dir=ws_dir,
+    )
+    res_not_allowed = engine.check(inv_not_allowed, read_spec, "A", ["main.py"])  # type: ignore[arg-type]
+    assert res_not_allowed.verdict == Verdict.DENY
+    assert "allowed_files" in res_not_allowed.reason.lower()
+
+    # 4. Destructive tool needs approval
+    write_spec = SimpleNamespace(
+        name="write_file",
+        roles=["worker"],
+        destructive=True,
+        needs_network=False,
+        source="builtin",
+    )
+    inv_write = SimpleNamespace(
+        tool="write_file",
+        args={"path": "main.py"},
+        role="worker",
+        workspace_dir=ws_dir,
+    )
+    res_write = engine.check(inv_write, write_spec, "A", [])  # type: ignore[arg-type]
+    assert res_write.verdict == Verdict.NEEDS_APPROVAL
+
+    # 5. Tier B network denied
+    net_spec = SimpleNamespace(
+        name="fetch",
+        roles=["worker"],
+        destructive=False,
+        needs_network=True,
+        source="builtin",
+    )
+    inv_net = SimpleNamespace(
+        tool="fetch",
+        args={},
+        role="worker",
+        workspace_dir=ws_dir,
+    )
+    res_net = engine.check(inv_net, net_spec, "B", [])  # type: ignore[arg-type]
+    assert res_net.verdict == Verdict.DENY
+    assert "network" in res_net.reason.lower()
+
+    # 6. Tier B codeexec denied
+    code_spec = SimpleNamespace(
+        name="run_code",
+        roles=["worker"],
+        destructive=False,
+        needs_network=False,
+        source="codeexec",
+    )
+    res_code = engine.check(inv_net, code_spec, "B", [])  # type: ignore[arg-type]
+    assert res_code.verdict == Verdict.DENY
+    assert "code" in res_code.reason.lower()
