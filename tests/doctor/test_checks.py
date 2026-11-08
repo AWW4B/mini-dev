@@ -19,17 +19,43 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/doctor/test_checks.py` on Windows and Linux once src/asf/doctor/checks.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/doctor/test_checks.py` and `uv run mypy tests/doctor/test_checks.py` are clean.
 
 
-from asf.doctor.checks import CheckResult, CheckStatus, run_all_checks  # noqa: F401
+from asf.doctor.checks import CheckResult, CheckStatus, run_all_checks
 
 
 def test_check_status_meets_contract() -> None:
     """Prove CheckStatus behaves as declared in src/asf/doctor/checks.py."""
-    raise NotImplementedError("write this test before implementing CheckStatus")
+    assert CheckStatus.OK.value == "ok"
+    assert CheckStatus.WARN.value == "warn"
+    assert CheckStatus.FAIL.value == "fail"
+
 
 def test_check_result_meets_contract() -> None:
     """Prove CheckResult behaves as declared in src/asf/doctor/checks.py."""
-    raise NotImplementedError("write this test before implementing CheckResult")
+    res = CheckResult(
+        name="python",
+        status=CheckStatus.OK,
+        detail="Python 3.14.10",
+        fix_hints={"apt": "apt install python3", "winget": "winget install Python.Python.3.12"},
+    )
+    assert res.name == "python"
+    assert res.status == CheckStatus.OK
+    assert res.detail == "Python 3.14.10"
+    assert "apt" in res.fix_hints
+
 
 def test_run_all_checks_meets_contract() -> None:
     """Prove run_all_checks behaves as declared in src/asf/doctor/checks.py."""
-    raise NotImplementedError("write this test before implementing run_all_checks")
+    results = run_all_checks()
+    assert isinstance(results, list)
+    assert len(results) >= 5
+
+    names = {r.name for r in results}
+    assert "python" in names
+    assert "git" in names
+    assert "writable_dirs" in names
+
+    for r in results:
+        assert isinstance(r, CheckResult)
+        assert r.name
+        assert r.status in (CheckStatus.OK, CheckStatus.WARN, CheckStatus.FAIL)
+        assert isinstance(r.fix_hints, dict)
