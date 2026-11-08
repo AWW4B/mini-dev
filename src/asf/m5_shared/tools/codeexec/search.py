@@ -21,5 +21,41 @@ from typing import Any, Literal
 from asf.m5_shared.tools.registry import ToolRegistry
 
 
-def search_tools(registry: ToolRegistry, role: str, query: str, detail: Literal["names", "descriptions", "full"] = "names") -> list[dict[str, Any]]:
-    raise NotImplementedError
+def search_tools(
+    registry: ToolRegistry,
+    role: str,
+    query: str,
+    detail: Literal["names", "descriptions", "full"] = "names",
+) -> list[dict[str, Any]]:
+    specs = registry.specs_for(role)
+    q = query.strip().lower()
+
+    matched = []
+    for spec in specs:
+        if not q or q == "*":
+            matched.append(spec)
+        elif (
+            q in spec.name.lower()
+            or q in spec.description.lower()
+            or q in getattr(spec, "source", "").lower()
+        ):
+            matched.append(spec)
+
+    results: list[dict[str, Any]] = []
+    for s in matched:
+        if detail == "names":
+            results.append({"name": s.name})
+        elif detail == "descriptions":
+            results.append({"name": s.name, "description": s.description})
+        else:  # "full"
+            results.append({
+                "name": s.name,
+                "description": s.description,
+                "args_schema": getattr(s, "args_schema", {}),
+                "destructive": getattr(s, "destructive", False),
+                "needs_network": getattr(s, "needs_network", False),
+                "roles": getattr(s, "roles", []),
+                "source": getattr(s, "source", ""),
+            })
+
+    return results
