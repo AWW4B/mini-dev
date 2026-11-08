@@ -21,14 +21,61 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/doctor/test_report.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/doctor/report.py` and `uv run mypy src/asf/doctor/report.py` are clean.
 
+import json
 from pathlib import Path
 
-from asf.doctor.checks import CheckResult
+from asf.config.paths import AppPaths, get_paths  # noqa: F401
+from asf.doctor.checks import CheckResult, CheckStatus
 
 
 def write_report(results: list[CheckResult], dest_dir: Path | None = None) -> tuple[Path, Path]:
-    raise NotImplementedError
+    target_dir = dest_dir or get_paths().log_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    md_path = target_dir / "doctor_report.md"
+    json_path = target_dir / "doctor_report.json"
+
+    # Write JSON report
+    data = [r.model_dump() for r in results]
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+    # Write Markdown report
+    lines: list[str] = [
+        "# AI Software Factory — Doctor Report",
+        "",
+        "| Check | Status | Details |",
+        "|---|---|---|",
+    ]
+    for r in results:
+        status_str = getattr(r.status, "value", str(r.status)).upper()
+        lines.append(f"| `{r.name}` | **{status_str}** | {r.detail} |")
+
+    # Add fix hints if any
+    hints: list[str] = []
+    for r in results:
+        if r.fix_hints:
+            hints.append(f"### `{r.name}`")
+            for distro, cmd in r.fix_hints.items():
+                hints.append(f"- **{distro}**: `{cmd}`")
+            hints.append("")
+
+    if hints:
+        lines.extend(["", "## Fix Hints", ""])
+        lines.extend(hints)
+
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    return md_path, json_path
 
 
 def exit_code_for(results: list[CheckResult]) -> int:
-    raise NotImplementedError
+    has_warn = False
+    for r in results:
+        status_val = getattr(r.status, "value", str(r.status))
+        if status_val == CheckStatus.FAIL.value or status_val == "fail":
+            return 2
+        if status_val == CheckStatus.WARN.value or status_val == "warn":
+            has_warn = True
+    return 1 if has_warn else 0

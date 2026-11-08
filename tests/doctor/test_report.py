@@ -19,13 +19,67 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/doctor/test_report.py` on Windows and Linux once src/asf/doctor/report.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/doctor/test_report.py` and `uv run mypy tests/doctor/test_report.py` are clean.
 
 
-from asf.doctor.report import exit_code_for, write_report  # noqa: F401
+import json
+from pathlib import Path
+
+from asf.doctor.report import exit_code_for, write_report
 
 
-def test_write_report_meets_contract() -> None:
+class DummyCheckResult:
+    def __init__(self, name: str, status: str, detail: str, fix_hints: dict[str, str] | None = None) -> None:
+        self.name = name
+        self.status = status
+        self.detail = detail
+        self.fix_hints = fix_hints or {}
+
+    def model_dump(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "status": self.status,
+            "detail": self.detail,
+            "fix_hints": self.fix_hints,
+        }
+
+
+def test_write_report_meets_contract(tmp_path: Path) -> None:
     """Prove write_report behaves as declared in src/asf/doctor/report.py."""
-    raise NotImplementedError("write this test before implementing write_report")
+    results = [
+        DummyCheckResult("python", "ok", "Python 3.14"),
+        DummyCheckResult("git", "warn", "git not found", {"apt": "apt install git"}),
+    ]
+    md_path, json_path = write_report(results, dest_dir=tmp_path)  # type: ignore[arg-type]
+
+    assert md_path.exists()
+    assert json_path.exists()
+    assert md_path.name.endswith(".md")
+    assert json_path.name.endswith(".json")
+
+    # Verify JSON content
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    assert len(data) == 2
+    assert data[0]["name"] == "python"
+    assert data[1]["status"] == "warn"
+
+    # Verify Markdown content
+    md_text = md_path.read_text(encoding="utf-8")
+    assert "Doctor Report" in md_text
+    assert "python" in md_text
+    assert "git" in md_text
+
 
 def test_exit_code_for_meets_contract() -> None:
     """Prove exit_code_for behaves as declared in src/asf/doctor/report.py."""
-    raise NotImplementedError("write this test before implementing exit_code_for")
+    ok_results = [DummyCheckResult("python", "ok", "ok")]
+    assert exit_code_for(ok_results) == 0  # type: ignore[arg-type]
+
+    warn_results = [
+        DummyCheckResult("python", "ok", "ok"),
+        DummyCheckResult("ripgrep", "warn", "missing"),
+    ]
+    assert exit_code_for(warn_results) == 1  # type: ignore[arg-type]
+
+    fail_results = [
+        DummyCheckResult("python", "fail", "wrong version"),
+        DummyCheckResult("ripgrep", "warn", "missing"),
+    ]
+    assert exit_code_for(fail_results) == 2  # type: ignore[arg-type]
