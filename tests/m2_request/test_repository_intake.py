@@ -18,10 +18,39 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m2_request/test_repository_intake.py` on Windows and Linux once src/asf/m2_request/repository_intake.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m2_request/test_repository_intake.py` and `uv run mypy tests/m2_request/test_repository_intake.py` are clean.
 
+from pathlib import Path
+from typing import Any
 
-from asf.m2_request.repository_intake import intake_repository  # noqa: F401
+from asf.m2_request.repository_intake import intake_repository
 
 
-def test_intake_repository_meets_contract() -> None:
+def test_intake_repository_meets_contract(tmp_path: Path, fake_paths: Any) -> None:
     """Prove intake_repository behaves as declared in src/asf/m2_request/repository_intake.py."""
-    raise NotImplementedError("write this test before implementing intake_repository")
+    _ = fake_paths
+
+    # Set up a sample Python project
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[project]\nname = "sample-proj"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "app.py").write_text("def run() -> None:\n    pass\n", encoding="utf-8")
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_app.py").write_text(
+        "def test_run() -> None:\n    assert True\n",
+        encoding="utf-8",
+    )
+
+    profile = intake_repository(str(tmp_path), project_id="proj_123")
+
+    assert "python" in profile.languages
+    assert len(profile.build_commands) >= 1
+    assert any("uv" in cmd or "pip" in cmd or "python" in cmd for cmd in profile.build_commands)
+    assert len(profile.test_commands) >= 1
+    assert profile.supported is True
+    assert profile.index_ref is not None
