@@ -17,10 +17,46 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/context/test_memory.py` on Windows and Linux once src/asf/m5_shared/context/memory.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/context/test_memory.py` and `uv run mypy tests/m5_shared/context/test_memory.py` are clean.
 
-
-from asf.m5_shared.context.memory import ProjectMemory  # noqa: F401
+from asf.m5_shared.context.memory import ProjectMemory
 
 
 def test_project_memory_meets_contract() -> None:
     """Prove ProjectMemory behaves as declared in src/asf/m5_shared/context/memory.py."""
-    raise NotImplementedError("write this test before implementing ProjectMemory")
+    mem = ProjectMemory()
+
+    # 1. Record decisions
+    mem.record_decision(
+        text="Use SQLite in WAL mode for single writer state store.",
+        tags=["database", "storage"],
+        source_hashes={"src/storage.py": "hash_v1"},
+    )
+    mem.record_decision(
+        text="Use Typer for the CLI interface.",
+        tags=["cli", "ui"],
+        source_hashes={"src/cli.py": "hash_cli_v1"},
+    )
+
+    # 2. Query relevant by tag
+    db_decisions = mem.relevant(["database"])
+    assert len(db_decisions) == 1
+    assert "SQLite" in db_decisions[0]
+
+    cli_decisions = mem.relevant(["cli"])
+    assert len(cli_decisions) == 1
+    assert "Typer" in cli_decisions[0]
+
+    both = mem.relevant(["database", "ui"])
+    assert len(both) == 2
+
+    empty_tag = mem.relevant(["nonexistent"])
+    assert len(empty_tag) == 0
+
+    # 3. Invalidate on source file hash change
+    # If storage.py changes hash, the database decision should be invalidated
+    invalidated_count = mem.invalidate_changed({"src/storage.py": "hash_v2"})
+    assert invalidated_count == 1
+
+    # Database decision no longer returned
+    assert len(mem.relevant(["database"])) == 0
+    # CLI decision remains valid
+    assert len(mem.relevant(["cli"])) == 1
