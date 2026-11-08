@@ -18,10 +18,45 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/workspace/test_blobs.py` on Windows and Linux once src/asf/m5_shared/workspace/blobs.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/workspace/test_blobs.py` and `uv run mypy tests/m5_shared/workspace/test_blobs.py` are clean.
 
+import hashlib
+from pathlib import Path
 
-from asf.m5_shared.workspace.blobs import BlobStore  # noqa: F401
+import pytest
+
+from asf.m5_shared.workspace.blobs import BlobStore
 
 
-def test_blob_store_meets_contract() -> None:
+def test_blob_store_meets_contract(tmp_path: Path) -> None:
     """Prove BlobStore behaves as declared in src/asf/m5_shared/workspace/blobs.py."""
-    raise NotImplementedError("write this test before implementing BlobStore")
+    store = BlobStore(tmp_path)
+
+    sample = b"hello world from blobs test"
+    expected_hash = hashlib.sha256(sample).hexdigest()
+    expected_ref = f"sha256:{expected_hash}"
+
+    # put
+    ref = store.put(sample)
+    assert ref == expected_ref
+
+    # get
+    retrieved = store.get(ref)
+    assert retrieved == sample
+
+    # idempotent put
+    ref2 = store.put(sample)
+    assert ref2 == ref
+
+    # empty payload
+    empty_ref = store.put(b"")
+    assert empty_ref == f"sha256:{hashlib.sha256(b'').hexdigest()}"
+    assert store.get(empty_ref) == b""
+
+    # large payload (64 KB)
+    large_payload = b"A" * 65536
+    large_ref = store.put(large_payload)
+    assert store.get(large_ref) == large_payload
+
+    # missing blob raises FileNotFoundError
+    missing_ref = f"sha256:{'0' * 64}"
+    with pytest.raises(FileNotFoundError):
+        store.get(missing_ref)

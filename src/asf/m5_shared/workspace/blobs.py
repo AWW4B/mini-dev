@@ -26,16 +26,46 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/workspace/test_blobs.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/workspace/blobs.py` and `uv run mypy src/asf/m5_shared/workspace/blobs.py` are clean.
 
+import hashlib
 from pathlib import Path
+
+from asf.config.paths import AppPaths, get_paths
 
 
 class BlobStore:
-    def __init__(self, root: Path) -> None:
-        raise NotImplementedError
+    root: Path
+
+    def __init__(self, root: Path | None = None) -> None:
+        if root is None:
+            paths: AppPaths = get_paths()
+            self.root = paths.data_dir / "blobs"
+        else:
+            self.root = root
+        self.root.mkdir(parents=True, exist_ok=True)
 
     def put(self, data: bytes) -> str:
         """Store bytes; return 'sha256:<hex>' ref (idempotent)."""
-        raise NotImplementedError
+        digest = hashlib.sha256(data).hexdigest()
+        ref = f"sha256:{digest}"
+        target: Path = self.root / digest[:2] / digest[2:]
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp_target: Path = target.with_suffix(".tmp")
+            tmp_target.write_bytes(data)
+            tmp_target.replace(target)
+        return ref
 
     def get(self, ref: str) -> bytes:
-        raise NotImplementedError
+        if ref.startswith("sha256:"):
+            digest = ref[7:]
+        else:
+            digest = ref
+        target: Path = self.root / digest[:2] / digest[2:]
+        if not target.is_file():
+            flat: Path = self.root / digest
+            if flat.is_file():
+                content: bytes = flat.read_bytes()
+                return content
+            raise FileNotFoundError(f"Blob ref not found: {ref}")
+        content_target: bytes = target.read_bytes()
+        return content_target
