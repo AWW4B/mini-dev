@@ -17,10 +17,36 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/gateway/test_tokenizers.py` on Windows and Linux once src/asf/m5_shared/gateway/tokenizers.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/gateway/test_tokenizers.py` and `uv run mypy tests/m5_shared/gateway/test_tokenizers.py` are clean.
 
+import pytest
 
-from asf.m5_shared.gateway.tokenizers import count_tokens  # noqa: F401
+from asf.m5_shared.gateway.tokenizers import count_tokens
 
 
-def test_count_tokens_meets_contract() -> None:
+def test_count_tokens_meets_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prove count_tokens behaves as declared in src/asf/m5_shared/gateway/tokenizers.py."""
-    raise NotImplementedError("write this test before implementing count_tokens")
+    # 1. Empty text returns 0 tokens, measured (not estimated)
+    tokens_empty, est_empty = count_tokens("gpt-4", "")
+    assert tokens_empty == 0
+    assert est_empty is False
+
+    # 2. Known model with local fake encoder (strictly no network access)
+    class FakeEncoding:
+        def encode(self, text: str) -> list[int]:
+            return [1] * len(text.split())
+
+    def fake_encoding_for_model(model_name: str) -> FakeEncoding:
+        if model_name == "gpt-4":
+            return FakeEncoding()
+        raise KeyError(model_name)
+
+    monkeypatch.setattr("tiktoken.encoding_for_model", fake_encoding_for_model)
+
+    sample_text = "Hello world this is a test"
+    tokens_known, est_known = count_tokens("gpt-4", sample_text)
+    assert tokens_known == 6
+    assert est_known is False
+
+    # 3. Unknown model falls back to flagged estimate (~4 chars per token)
+    tokens_unknown, est_unknown = count_tokens("nonexistent-custom-llm", "12345678")
+    assert tokens_unknown == 2
+    assert est_unknown is True
