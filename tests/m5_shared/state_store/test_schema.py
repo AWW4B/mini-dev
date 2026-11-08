@@ -18,14 +18,59 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/state_store/test_schema.py` on Windows and Linux once src/asf/m5_shared/state_store/schema.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/state_store/test_schema.py` and `uv run mypy tests/m5_shared/state_store/test_schema.py` are clean.
 
+import sqlite3
+from pathlib import Path
 
-from asf.m5_shared.state_store.schema import SCHEMA_VERSION, migrate  # noqa: F401
+from asf.m5_shared.state_store.schema import SCHEMA_VERSION, migrate
 
 
-def test_migrate_meets_contract() -> None:
+def test_migrate_meets_contract(tmp_path: Path) -> None:
     """Prove migrate behaves as declared in src/asf/m5_shared/state_store/schema.py."""
-    raise NotImplementedError("write this test before implementing migrate")
+    db_file = tmp_path / "test_state.db"
+    conn = sqlite3.connect(str(db_file))
+
+    # Initial migration
+    migrate(conn)
+
+    # Check foreign keys pragma
+    fk_cur = conn.execute("PRAGMA foreign_keys;")
+    fk_row = fk_cur.fetchone()
+    assert fk_row is not None and fk_row[0] == 1
+
+    # Check expected tables
+    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = {row[0] for row in cur.fetchall()}
+    expected_tables = {
+        "meta",
+        "runs",
+        "tasks",
+        "attempts",
+        "leases",
+        "commands",
+        "decisions",
+        "events",
+        "outbox",
+        "call_metrics",
+        "tool_metrics",
+        "limit_events",
+        "contracts",
+        "memory",
+    }
+    assert expected_tables.issubset(tables)
+
+    # Check meta table records SCHEMA_VERSION
+    cur = conn.execute("SELECT value FROM meta WHERE key = 'schema_version';")
+    meta_row = cur.fetchone()
+    assert meta_row is not None
+    assert int(meta_row[0]) == SCHEMA_VERSION
+
+    # Idempotent re-run
+    migrate(conn)
+
+    conn.close()
+
 
 def test_s_c_h_e_m_a__v_e_r_s_i_o_n_meets_contract() -> None:
     """Prove SCHEMA_VERSION behaves as declared in src/asf/m5_shared/state_store/schema.py."""
-    raise NotImplementedError("write this test before implementing SCHEMA_VERSION")
+    assert isinstance(SCHEMA_VERSION, int)
+    assert SCHEMA_VERSION >= 1

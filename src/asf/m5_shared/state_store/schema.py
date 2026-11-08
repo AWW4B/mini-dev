@@ -25,7 +25,171 @@ import sqlite3
 
 SCHEMA_VERSION: int = 1
 
+_CREATE_TABLES_SQL = """
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS runs (
+    run_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    last_activity TEXT NOT NULL,
+    cost REAL NOT NULL DEFAULT 0.0,
+    cost_estimated INTEGER NOT NULL DEFAULT 0,
+    payload TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    task_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    parent_id TEXT,
+    state TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    title TEXT NOT NULL DEFAULT '',
+    payload TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT,
+    updated_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_run_state ON tasks(run_id, state);
+
+CREATE TABLE IF NOT EXISTS attempts (
+    attempt_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    payload TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS leases (
+    lease_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    worker_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS commands (
+    command_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    command TEXT NOT NULL,
+    task_id TEXT,
+    consumed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_commands_run_consumed ON commands(run_id, consumed);
+
+CREATE TABLE IF NOT EXISTS decisions (
+    decision_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    task_id TEXT,
+    topic TEXT NOT NULL,
+    status TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    payload TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    event_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    visibility TEXT NOT NULL,
+    source TEXT NOT NULL,
+    task_id TEXT,
+    attempt_id TEXT,
+    blob_ref TEXT,
+    payload TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(run_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_run_seq ON events(run_id, seq);
+
+CREATE TABLE IF NOT EXISTS outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    run_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    published INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbox_published ON outbox(published);
+
+CREATE TABLE IF NOT EXISTS call_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    task_id TEXT,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost REAL NOT NULL DEFAULT 0.0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    timestamp TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tool_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    task_id TEXT,
+    tool_name TEXT NOT NULL,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    success INTEGER NOT NULL DEFAULT 1,
+    timestamp TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS limit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    details TEXT NOT NULL DEFAULT '{}',
+    timestamp TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS contracts (
+    contract_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    payload TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    category TEXT NOT NULL,
+    content TEXT NOT NULL,
+    updated_at TEXT,
+    UNIQUE(project_id, key)
+);
+"""
+
 
 def migrate(conn: sqlite3.Connection) -> None:
     """Create or upgrade all tables of state.db to SCHEMA_VERSION inside one transaction."""
-    raise NotImplementedError
+    try:
+        conn.execute("PRAGMA journal_mode = WAL;")
+    except sqlite3.OperationalError:
+        pass
+    conn.execute("PRAGMA foreign_keys = ON;")
+
+    with conn:
+        conn.executescript(_CREATE_TABLES_SQL)
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?);",
+            (str(SCHEMA_VERSION),),
+        )
