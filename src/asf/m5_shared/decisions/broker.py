@@ -29,24 +29,123 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/decisions/test_broker.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/decisions/broker.py` and `uv run mypy src/asf/m5_shared/decisions/broker.py` are clean.
 
-from asf.contracts.decisions import DecisionRequest, DecisionResolved
+import json
+from datetime import UTC, datetime
+from typing import Any
+
+from asf.contracts.decisions import NEVER_AUTO_APPROVED, DecisionRequest, DecisionResolved
 from asf.m5_shared.state_store.store import StateStore
 
 
 class DecisionBroker:
+    store: StateStore
+    resolved_answers: dict[str, DecisionResolved]
+
     def __init__(self, store: StateStore) -> None:
-        raise NotImplementedError
+        self.store = store
+        self.resolved_answers = {}
 
     def request(self, req: DecisionRequest) -> None:
-        raise NotImplementedError
+        topic = req.kind.value if hasattr(req.kind, "value") else str(req.kind)
+        payload_str = req.model_dump_json() if hasattr(req, "model_dump_json") else json.dumps(req.__dict__)
+        now_iso = datetime.now(UTC).isoformat()
+        with self.store.conn:
+            self.store.conn.execute(
+                "INSERT OR REPLACE INTO decisions (decision_id, run_id, task_id, topic, status, version, "
+                "payload, created_at) VALUES (?, ?, ?, ?, 'PENDING', 1, ?, ?)",
+                (req.decision_id, req.run_id, req.task_id, topic, payload_str, now_iso),
+            )
 
     def resolve(self, answer: DecisionResolved) -> None:
         """Validate the answer for its kind, log it, and mark it for routing to the requester."""
-        raise NotImplementedError
+        cur = self.store.conn.execute(
+            "SELECT payload, status FROM decisions WHERE decision_id = ?",
+            (answer.decision_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise KeyError(f"Decision not found: {answer.decision_id}")
+
+        req_data = json.loads(row["payload"])
+        req = DecisionRequest.model_validate(req_data)
+
+        if req.options and answer.choice not in req.options:
+            raise ValueError(f"Invalid choice '{answer.choice}'. Allowed options: {req.options}")
+
+        try:
+            req_dump = req.model_dump(mode="json")
+        except TypeError:
+            req_dump = req.model_dump() if hasattr(req, "model_dump") else json.loads(json.dumps(req.__dict__, default=str))
+
+        try:
+            ans_dump = answer.model_dump(mode="json")
+        except TypeError:
+            ans_dump = (
+                answer.model_dump()
+                if hasattr(answer, "model_dump")
+                else json.loads(json.dumps(answer.__dict__, default=str))
+            )
+        resolved_payload = {
+            "request": req_dump,
+            "resolution": ans_dump,
+        }
+        with self.store.conn:
+            self.store.conn.execute(
+                "UPDATE decisions SET status = 'RESOLVED', payload = ? WHERE decision_id = ?",
+                (json.dumps(resolved_payload), answer.decision_id),
+            )
+
+        self.resolved_answers[answer.decision_id] = answer
 
     def pending(self, run_id: str | None = None) -> list[DecisionRequest]:
-        raise NotImplementedError
+        sql = "SELECT payload FROM decisions WHERE status = 'PENDING'"
+        params: list[Any] = []
+        if run_id:
+            sql += " AND run_id = ?"
+            params.append(run_id)
+        sql += " ORDER BY created_at ASC"
+
+        cur = self.store.conn.execute(sql, params)
+        requests: list[DecisionRequest] = []
+        for row in cur.fetchall():
+            requests.append(DecisionRequest.model_validate_json(row["payload"]))
+        return requests
 
     def sweep_deadlines(self) -> list[DecisionResolved]:
         """Apply safe defaults for expired decisions that allow them; return what was applied."""
-        raise NotImplementedError
+        now = datetime.now(UTC)
+        pending_requests = self.pending()
+        applied: list[DecisionResolved] = []
+
+        for req in pending_requests:
+            if req.deadline is None:
+                continue
+
+            deadline = req.deadline
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=UTC)
+
+            if now >= deadline:
+                # Never auto-approve kinds in NEVER_AUTO_APPROVED
+                kind_val = req.kind.value if hasattr(req.kind, "value") else str(req.kind)
+                never_auto_vals = {
+                    k.value if hasattr(k, "value") else str(k) for k in NEVER_AUTO_APPROVED
+                }
+                if req.kind in NEVER_AUTO_APPROVED or kind_val in never_auto_vals:
+                    continue
+
+                if req.default_on_timeout is None:
+                    continue
+
+                answer = DecisionResolved(
+                    decision_id=req.decision_id,
+                    choice=req.default_on_timeout,
+                    text="Applied safe default on deadline expiration",
+                    answered_by="system",
+                    answered_at=now,
+                    applied_default=True,
+                )
+                self.resolve(answer)
+                applied.append(answer)
+
+        return applied
