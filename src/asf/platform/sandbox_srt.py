@@ -22,6 +22,13 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/platform/test_sandbox_srt.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/platform/sandbox_srt.py` and `uv run mypy src/asf/platform/sandbox_srt.py` are clean.
 
+import json
+import shutil
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+
 from asf.platform.base import ProcessResult, SandboxSpec
 
 
@@ -30,7 +37,52 @@ class SrtSandbox:
     tier = "A"
 
     def available(self) -> bool:
-        raise NotImplementedError
+        return shutil.which("srt") is not None
 
     def run(self, spec: SandboxSpec) -> ProcessResult:
-        raise NotImplementedError
+        srt_bin = shutil.which("srt")
+        if not srt_bin:
+            raise RuntimeError("srt is not installed or not on PATH")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings_path = Path(tmp_dir) / "settings.json"
+            settings_data = {
+                "network": bool(spec.network),
+                "filesystem": {
+                    "read": [str(p) for p in spec.readable_paths],
+                    "write": [str(p) for p in spec.writable_paths],
+                },
+            }
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump(settings_data, f)
+
+            cmd = [srt_bin, "--settings", str(settings_path), "--", *spec.argv]
+            start_time = time.monotonic()
+            env = spec.env if spec.env else None
+
+            try:
+                completed = subprocess.run(  # noqa: S603
+                    cmd,
+                    cwd=spec.cwd,
+                    timeout=spec.timeout_s,
+                    env=env,
+                    capture_output=True,
+                    check=False,
+                )
+                duration_ms = int((time.monotonic() - start_time) * 1000)
+                return ProcessResult(
+                    exit_code=completed.returncode,
+                    stdout=completed.stdout,
+                    stderr=completed.stderr,
+                    timed_out=False,
+                    duration_ms=duration_ms,
+                )
+            except subprocess.TimeoutExpired as exc:
+                duration_ms = int((time.monotonic() - start_time) * 1000)
+                return ProcessResult(
+                    exit_code=-1,
+                    stdout=exc.stdout or b"",
+                    stderr=exc.stderr or b"",
+                    timed_out=True,
+                    duration_ms=duration_ms,
+                )

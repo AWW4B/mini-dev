@@ -18,12 +18,37 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/platform/test_sandbox_srt.py` on Windows and Linux once src/asf/platform/sandbox_srt.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/platform/test_sandbox_srt.py` and `uv run mypy tests/platform/test_sandbox_srt.py` are clean.
 
+from pathlib import Path
+
 import pytest
 
-from asf.platform.sandbox_srt import SrtSandbox  # noqa: F401
+from asf.platform.sandbox_srt import SrtSandbox
+
+
+def test_srt_sandbox_attributes() -> None:
+    sandbox = SrtSandbox()
+    assert sandbox.name == "srt"
+    assert sandbox.tier == "A"
+    assert isinstance(sandbox.available(), bool)
 
 
 @pytest.mark.needs_sandbox
-def test_srt_sandbox_meets_contract() -> None:
+def test_srt_sandbox_meets_contract(tmp_path: Path) -> None:
     """Prove SrtSandbox behaves as declared in src/asf/platform/sandbox_srt.py."""
-    raise NotImplementedError("write this test before implementing SrtSandbox")
+    sandbox = SrtSandbox()
+    if not sandbox.available():
+        pytest.skip("srt is not available on PATH")
+
+    class DummySpec:
+        argv = ["echo", "srt_ok"]
+        cwd = tmp_path
+        writable_paths: list[Path] = [tmp_path]
+        readable_paths: list[Path] = [tmp_path]
+        network = False
+        timeout_s = 10
+        env: dict[str, str] = {}
+        extra_fds: list[int] = []
+
+    res = sandbox.run(DummySpec())  # type: ignore[arg-type]
+    assert res.exit_code == 0
+    assert b"srt_ok" in res.stdout
