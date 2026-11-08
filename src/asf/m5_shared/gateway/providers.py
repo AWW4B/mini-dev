@@ -19,8 +19,13 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/gateway/test_providers.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/gateway/providers.py` and `uv run mypy src/asf/m5_shared/gateway/providers.py` are clean.
 
+from typing import Any
+
 from langchain_core.language_models.chat_models import BaseChatModel
-from pydantic import BaseModel
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, SecretStr
+
+from asf.config.secrets import get_api_key
 
 
 class RouteConfig(BaseModel):
@@ -32,4 +37,61 @@ class RouteConfig(BaseModel):
 
 
 def build_chat_model(route: RouteConfig) -> BaseChatModel:
-    raise NotImplementedError
+    provider = route.provider.lower().strip()
+    key = get_api_key(route.provider)
+    if provider == "gemini" and not key:
+        key = get_api_key("google")
+    elif provider == "google" and not key:
+        key = get_api_key("gemini")
+
+    if provider in ("local", "llama", "llama-server", "ollama", "vllm"):
+        local_base_url = route.base_url or "http://127.0.0.1:8080/v1"
+        api_key = SecretStr(key or "local")
+        extra: dict[str, Any] = dict(route.params)
+        if route.reasoning_effort:
+            extra["reasoning_effort"] = route.reasoning_effort
+        return ChatOpenAI(model=route.model, api_key=api_key, base_url=local_base_url, **extra)
+
+    # For external providers, key is required
+    if not key:
+        raise ValueError(
+            f"Missing API key for provider '{route.provider}'. Set FACTORY_{route.provider.upper()}_API_KEY or configure keyring."
+        )
+
+    secret_key = SecretStr(key)
+
+    if provider in ("anthropic", "claude"):
+        try:
+            from langchain_anthropic import ChatAnthropic
+        except ImportError as err:
+            raise RuntimeError("langchain-anthropic is not installed. Install with extra 'anthropic'.") from err
+        anthropic_extra: dict[str, Any] = dict(route.params)
+        if route.base_url:
+            anthropic_extra["base_url"] = route.base_url
+        return ChatAnthropic(model_name=route.model, api_key=secret_key, **anthropic_extra)
+
+    if provider in ("gemini", "google") and not route.base_url:
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            google_extra: dict[str, Any] = dict(route.params)
+            return ChatGoogleGenerativeAI(model=route.model, google_api_key=secret_key, **google_extra)
+        except ImportError:
+            pass
+
+    # OpenAI, Groq, xAI, or Gemini compatibility endpoint via ChatOpenAI
+    openai_extra: dict[str, Any] = dict(route.params)
+    if route.reasoning_effort:
+        openai_extra["reasoning_effort"] = route.reasoning_effort
+
+    base_url: str | None = route.base_url
+    if not base_url:
+        if provider == "groq":
+            base_url = "https://api.groq.com/openai/v1"
+        elif provider == "xai":
+            base_url = "https://api.x.ai/v1"
+        elif provider in ("gemini", "google"):
+            base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+    if base_url:
+        return ChatOpenAI(model=route.model, api_key=secret_key, base_url=base_url, **openai_extra)
+    return ChatOpenAI(model=route.model, api_key=secret_key, **openai_extra)
