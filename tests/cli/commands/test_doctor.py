@@ -18,13 +18,21 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/cli/commands/test_doctor.py` on Windows and Linux once src/asf/cli/commands/doctor.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/cli/commands/test_doctor.py` and `uv run mypy tests/cli/commands/test_doctor.py` are clean.
 
 
-from asf.cli.commands.doctor import doctor, register  # noqa: F401
+import typer
+
+from asf.cli.commands.doctor import doctor, register
 
 
 def test_doctor_meets_contract() -> None:
     """Prove doctor behaves as declared in src/asf/cli/commands/doctor.py."""
-    raise NotImplementedError("write this test before implementing doctor")
+    code = doctor(output="plain")
+    assert isinstance(code, int)
+    assert code in (0, 1, 2)
+
 
 def test_register_meets_contract() -> None:
     """Prove register behaves as declared in src/asf/cli/commands/doctor.py."""
-    raise NotImplementedError("write this test before implementing register")
+    app = typer.Typer()
+    register(app)
+    command_names = [cmd.name for cmd in app.registered_commands]
+    assert "doctor" in command_names

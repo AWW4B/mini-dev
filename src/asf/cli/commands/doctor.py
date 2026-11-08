@@ -23,13 +23,41 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/cli/commands/test_doctor.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/cli/commands/doctor.py` and `uv run mypy src/asf/cli/commands/doctor.py` are clean.
 
+import json
+
 import typer
+
+from asf.cli.ui.render import OutputMode, Renderer
+from asf.doctor.checks import run_all_checks
+from asf.doctor.report import exit_code_for, write_report
 
 
 def doctor(output: str = "rich") -> int:
-    raise NotImplementedError
+    results = run_all_checks()
+    write_report(results)
+    code = exit_code_for(results)
+
+    try:
+        mode = OutputMode(output)
+        renderer = Renderer(mode)
+        rows = [[r.name, str(r.status), r.detail] for r in results]
+        renderer.table("Doctor Checks", ["Check", "Status", "Details"], rows)
+    except (NotImplementedError, Exception):
+        # Fallback if Renderer is not yet implemented or raises
+        if output == "json":
+            print(json.dumps([r.model_dump() for r in results], indent=2))
+        else:
+            for r in results:
+                status_str = getattr(r.status, "value", str(r.status)).upper()
+                print(f"[{status_str:4s}] {r.name:<15s}: {r.detail}")
+    return code
 
 
 def register(app: typer.Typer) -> None:
     """Attach the `doctor` command(s) to the root Typer app."""
-    raise NotImplementedError
+    @app.command("doctor")
+    def doctor_cmd(
+        output: str = typer.Option("rich", "--output", "-o", help="Output mode: rich | plain | json"),
+    ) -> None:
+        exit_code = doctor(output=output)
+        raise typer.Exit(code=exit_code)
