@@ -18,12 +18,50 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/platform/test_windows.py` on Windows and Linux once src/asf/platform/windows.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/platform/test_windows.py` and `uv run mypy tests/platform/test_windows.py` are clean.
 
+import sys
+from pathlib import Path
+
 import pytest
 
-from asf.platform.windows import WindowsPlatform  # noqa: F401
+from asf.platform.windows import WindowsPlatform
+
+
+def test_windows_platform_attributes() -> None:
+    platform = WindowsPlatform()
+    assert platform.name == "windows"
 
 
 @pytest.mark.windows_only
-def test_windows_platform_meets_contract() -> None:
+def test_windows_platform_meets_contract(tmp_path: Path) -> None:
     """Prove WindowsPlatform behaves as declared in src/asf/platform/windows.py."""
-    raise NotImplementedError("write this test before implementing WindowsPlatform")
+    platform = WindowsPlatform()
+
+    # sandbox returns a backend
+    sb = platform.sandbox()
+    assert sb.name in ("srt", "jobobject", "static-only")
+
+    # run_process
+    res = platform.run_process(
+        [sys.executable, "-c", "import sys; sys.stdout.write('win_ok'); sys.exit(0)"],
+        cwd=tmp_path,
+        timeout_s=10,
+    )
+    assert res.exit_code == 0
+    assert res.stdout == b"win_ok"
+    assert res.timed_out is False
+
+    # lock_file
+    lock_file = tmp_path / "win.lock"
+    with platform.lock_file(lock_file, timeout_s=2):  # type: ignore[attr-defined]
+        assert lock_file.exists()
+
+    # resolve_within normal path
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    resolved = platform.resolve_within(tmp_path, "sub")
+    assert resolved == sub.resolve()
+
+    # resolve_within escape raises PolicyDenied
+    with pytest.raises(Exception) as exc_info:
+        platform.resolve_within(sub, "../outside.txt")
+    assert exc_info.type.__name__ == "PolicyDenied"
