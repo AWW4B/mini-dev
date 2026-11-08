@@ -22,4 +22,77 @@ from asf.contracts.metrics import MetricsSnapshot, ResourceAdvisory
 
 
 def evaluate_thresholds(snapshot: MetricsSnapshot, budget: RunBudget) -> list[ResourceAdvisory]:
-    raise NotImplementedError
+    advisories: list[ResourceAdvisory] = []
+    values = snapshot.values
+
+    alert_frac = getattr(budget, "alert_fraction", 0.8)
+
+    # 1. Spend check
+    cost = values.get("cost", 0.0) + getattr(budget, "used_api_spend", 0.0)
+    max_spend = getattr(budget, "max_api_spend", 0.0)
+    if max_spend > 0:
+        if cost >= max_spend:
+            advisories.append(
+                ResourceAdvisory(
+                    kind="budget_spend",
+                    severity="hard",
+                    max_slots=0,
+                    detail=f"API spend {cost:.2f} reached or exceeded limit {max_spend:.2f}",
+                )
+            )
+        elif cost >= max_spend * alert_frac:
+            advisories.append(
+                ResourceAdvisory(
+                    kind="budget_spend",
+                    severity="soft",
+                    detail=f"API spend {cost:.2f} reached {alert_frac * 100:.0f}% of limit {max_spend:.2f}",
+                )
+            )
+
+    # 2. Remote tokens check
+    in_tok = values.get("input_tokens", 0.0)
+    out_tok = values.get("output_tokens", 0.0)
+    tot_tokens = in_tok + out_tok + getattr(budget, "used_remote_tokens", 0)
+    max_tokens = getattr(budget, "max_remote_tokens", 0)
+    if max_tokens > 0:
+        if tot_tokens >= max_tokens:
+            advisories.append(
+                ResourceAdvisory(
+                    kind="budget_tokens",
+                    severity="hard",
+                    max_slots=0,
+                    detail=f"Token usage {int(tot_tokens)} reached or exceeded limit {max_tokens}",
+                )
+            )
+        elif tot_tokens >= max_tokens * alert_frac:
+            advisories.append(
+                ResourceAdvisory(
+                    kind="budget_tokens",
+                    severity="soft",
+                    detail=f"Token usage {int(tot_tokens)} reached {alert_frac * 100:.0f}% of limit {max_tokens}",
+                )
+            )
+
+    # 3. Task nodes check
+    nodes = values.get("task_nodes", 0.0) + getattr(budget, "used_task_nodes", 0)
+    max_nodes = getattr(budget, "max_task_nodes", 0)
+    if max_nodes > 0:
+        if nodes >= max_nodes:
+            advisories.append(
+                ResourceAdvisory(
+                    kind="budget_nodes",
+                    severity="hard",
+                    max_slots=0,
+                    detail=f"Task nodes {int(nodes)} reached or exceeded limit {max_nodes}",
+                )
+            )
+        elif nodes >= max_nodes * alert_frac:
+            advisories.append(
+                ResourceAdvisory(
+                    kind="budget_nodes",
+                    severity="soft",
+                    detail=f"Task nodes {int(nodes)} reached {alert_frac * 100:.0f}% of limit {max_nodes}",
+                )
+            )
+
+    return advisories
