@@ -19,29 +19,101 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/tools/test_builtin_tools.py` on Windows and Linux once src/asf/m5_shared/tools/builtin_tools.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/tools/test_builtin_tools.py` and `uv run mypy tests/m5_shared/tools/test_builtin_tools.py` are clean.
 
 
-from asf.m5_shared.tools.builtin_tools import read_file, register_builtin_tools, run_linter, run_tests, search_code, write_file  # noqa: F401
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from asf.m5_shared.tools.builtin_tools import (
+    read_file,
+    register_builtin_tools,
+    run_linter,
+    run_tests,
+    search_code,
+    write_file,
+)
 
 
-def test_read_file_meets_contract() -> None:
+def test_read_file_meets_contract(tmp_path: Path) -> None:
     """Prove read_file behaves as declared in src/asf/m5_shared/tools/builtin_tools.py."""
-    raise NotImplementedError("write this test before implementing read_file")
+    f = tmp_path / "greeting.txt"
+    f.write_text("Hello World", encoding="utf-8")
+    content = read_file(tmp_path, "greeting.txt")
+    assert content == "Hello World"
 
-def test_write_file_meets_contract() -> None:
+
+def test_write_file_meets_contract(tmp_path: Path) -> None:
     """Prove write_file behaves as declared in src/asf/m5_shared/tools/builtin_tools.py."""
-    raise NotImplementedError("write this test before implementing write_file")
+    write_file(tmp_path, "nested/out.txt", "Some Data")
+    created = tmp_path / "nested" / "out.txt"
+    assert created.is_file()
+    assert created.read_text(encoding="utf-8") == "Some Data"
 
-def test_search_code_meets_contract() -> None:
+
+def test_search_code_meets_contract(tmp_path: Path) -> None:
     """Prove search_code behaves as declared in src/asf/m5_shared/tools/builtin_tools.py."""
-    raise NotImplementedError("write this test before implementing search_code")
+    f1 = tmp_path / "a.py"
+    f1.write_text("def find_me():\n    pass\n", encoding="utf-8")
+    f2 = tmp_path / "b.py"
+    f2.write_text("other code\n", encoding="utf-8")
 
-def test_run_tests_meets_contract() -> None:
+    results = search_code(tmp_path, "find_me")
+    assert len(results) >= 1
+    assert any("find_me" in r for r in results)
+
+
+def test_run_tests_meets_contract(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Prove run_tests behaves as declared in src/asf/m5_shared/tools/builtin_tools.py."""
-    raise NotImplementedError("write this test before implementing run_tests")
+    class FakePlatform:
+        @staticmethod
+        def run_process(argv: list[str], cwd: Path, timeout_s: int) -> Any:
+            return SimpleNamespace(
+                exit_code=0,
+                stdout=b"1 passed",
+                stderr=b"",
+                timed_out=False,
+                duration_ms=15,
+            )
 
-def test_run_linter_meets_contract() -> None:
+    monkeypatch.setattr("asf.m5_shared.tools.builtin_tools.get_platform", lambda: FakePlatform())
+    code, output = run_tests(tmp_path, ["tests/test_x.py"])
+    assert code == 0
+    assert "1 passed" in output
+
+
+def test_run_linter_meets_contract(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Prove run_linter behaves as declared in src/asf/m5_shared/tools/builtin_tools.py."""
-    raise NotImplementedError("write this test before implementing run_linter")
+    class FakePlatform:
+        @staticmethod
+        def run_process(argv: list[str], cwd: Path, timeout_s: int) -> Any:
+            return SimpleNamespace(
+                exit_code=0,
+                stdout=b"All checks passed!",
+                stderr=b"",
+                timed_out=False,
+                duration_ms=5,
+            )
+
+    monkeypatch.setattr("asf.m5_shared.tools.builtin_tools.get_platform", lambda: FakePlatform())
+    code, output = run_linter(tmp_path, ["src/"])
+    assert code == 0
+    assert "All checks passed!" in output
+
 
 def test_register_builtin_tools_meets_contract() -> None:
     """Prove register_builtin_tools behaves as declared in src/asf/m5_shared/tools/builtin_tools.py."""
-    raise NotImplementedError("write this test before implementing register_builtin_tools")
+    registered: dict[str, Any] = {}
+
+    class FakeRegistry:
+        def register(self, spec: Any, fn: Any) -> None:
+            registered[spec.name] = (spec, fn)
+
+    fake_reg = FakeRegistry()
+    register_builtin_tools(fake_reg)  # type: ignore[arg-type]
+
+    assert "read_file" in registered
+    assert "write_file" in registered
+    assert "search_code" in registered
+    assert "run_tests" in registered
+    assert "run_linter" in registered

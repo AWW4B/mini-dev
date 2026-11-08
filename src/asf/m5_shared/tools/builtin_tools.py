@@ -23,30 +23,143 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/tools/test_builtin_tools.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/tools/builtin_tools.py` and `uv run mypy src/asf/m5_shared/tools/builtin_tools.py` are clean.
 
+import re
+import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 from asf.m5_shared.tools.registry import ToolRegistry
+from asf.platform.select import get_platform
 
 
 def read_file(root: Path, rel_path: str) -> str:
-    raise NotImplementedError
+    target = get_platform().resolve_within(root, rel_path)
+    return target.read_text(encoding="utf-8")
 
 
 def write_file(root: Path, rel_path: str, content: str) -> None:
-    raise NotImplementedError
+    target = get_platform().resolve_within(root, rel_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
 
 
 def search_code(root: Path, pattern: str, max_hits: int = 50) -> list[str]:
-    raise NotImplementedError
+    rg = shutil.which("rg")
+    if rg:
+        try:
+            res = get_platform().run_process(
+                [rg, "--max-count", str(max_hits), "--no-heading", "--line-number", pattern, "."],
+                cwd=root,
+                timeout_s=30,
+            )
+            lines = res.stdout.decode("utf-8", errors="replace").splitlines()
+            return lines[:max_hits]
+        except Exception as _rg_err:  # noqa: BLE001
+            _ = _rg_err
+
+    # Pure Python fallback (D-30)
+    hits: list[str] = []
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        rx = re.compile(re.escape(pattern))
+
+    for p in root.rglob("*"):
+        if not p.is_file():
+            continue
+        rel_parts = p.relative_to(root).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if rx.search(line):
+                    rel = p.relative_to(root).as_posix()
+                    hits.append(f"{rel}:{lineno}: {line.strip()}")
+                    if len(hits) >= max_hits:
+                        return hits
+        except Exception as _read_err:  # noqa: BLE001
+            _ = _read_err
+    return hits
 
 
 def run_tests(root: Path, selectors: list[str]) -> tuple[int, str]:
-    raise NotImplementedError
+    argv = ["pytest"] + selectors
+    res = get_platform().run_process(argv, cwd=root, timeout_s=120)
+    out = (res.stdout + res.stderr).decode("utf-8", errors="replace")
+    return res.exit_code, out
 
 
 def run_linter(root: Path, files: list[str]) -> tuple[int, str]:
-    raise NotImplementedError
+    argv = ["ruff", "check"] + files
+    res = get_platform().run_process(argv, cwd=root, timeout_s=60)
+    out = (res.stdout + res.stderr).decode("utf-8", errors="replace")
+    return res.exit_code, out
 
 
 def register_builtin_tools(registry: ToolRegistry) -> None:
-    raise NotImplementedError
+    specs = [
+        (
+            SimpleNamespace(
+                name="read_file",
+                description="Read a file from the workspace",
+                args_schema={"type": "object", "properties": {"rel_path": {"type": "string"}}, "required": ["rel_path"]},
+                destructive=False,
+                needs_network=False,
+                roles=["*"],
+                source="builtin",
+            ),
+            lambda root, rel_path: read_file(root, rel_path),
+        ),
+        (
+            SimpleNamespace(
+                name="write_file",
+                description="Write content to a file in the workspace",
+                args_schema={"type": "object", "properties": {"rel_path": {"type": "string"}, "content": {"type": "string"}}, "required": ["rel_path", "content"]},
+                destructive=True,
+                needs_network=False,
+                roles=["worker", "developer", "coder", "T2"],
+                source="builtin",
+            ),
+            lambda root, rel_path, content: write_file(root, rel_path, content),
+        ),
+        (
+            SimpleNamespace(
+                name="search_code",
+                description="Search code in the workspace matching a regex pattern",
+                args_schema={"type": "object", "properties": {"pattern": {"type": "string"}, "max_hits": {"type": "integer"}}, "required": ["pattern"]},
+                destructive=False,
+                needs_network=False,
+                roles=["*"],
+                source="builtin",
+            ),
+            lambda root, pattern, max_hits=50: search_code(root, pattern, max_hits),
+        ),
+        (
+            SimpleNamespace(
+                name="run_tests",
+                description="Run unit tests in the workspace",
+                args_schema={"type": "object", "properties": {"selectors": {"type": "array", "items": {"type": "string"}}}, "required": ["selectors"]},
+                destructive=False,
+                needs_network=False,
+                roles=["worker", "reviewer", "acceptance"],
+                source="builtin",
+            ),
+            lambda root, selectors: run_tests(root, selectors),
+        ),
+        (
+            SimpleNamespace(
+                name="run_linter",
+                description="Run linter in the workspace",
+                args_schema={"type": "object", "properties": {"files": {"type": "array", "items": {"type": "string"}}}, "required": ["files"]},
+                destructive=False,
+                needs_network=False,
+                roles=["worker", "reviewer"],
+                source="builtin",
+            ),
+            lambda root, files: run_linter(root, files),
+        ),
+    ]
+
+    for spec, fn in specs:
+        registry.register(spec, fn)  # type: ignore[arg-type]
