@@ -26,9 +26,17 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/runtime/test_backends.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/runtime/backends.py` and `uv run mypy src/asf/m5_shared/runtime/backends.py` are clean.
 
-from typing import Protocol
+import shutil
+from pathlib import Path
+from typing import Protocol, runtime_checkable
+
+import httpx
+
+from asf.config.paths import AppPaths, get_paths  # noqa: F401
+from asf.platform.select import get_platform
 
 
+@runtime_checkable
 class LocalRuntimeBackend(Protocol):
     name: str
 
@@ -42,39 +50,126 @@ class LocalRuntimeBackend(Protocol):
 
 
 class LlamaServerBackend:
-    name = "llama-server"
+    name: str = "llama-server"
+    binary: str | None
+    host: str
+    port: int
+    models_dir: Path | None
+    _pid: int | None
+
+    def __init__(
+        self,
+        binary: str | None = None,
+        host: str = "127.0.0.1",
+        port: int = 8080,
+        models_dir: Path | None = None,
+    ) -> None:
+        self.binary = binary
+        self.host = host
+        self.port = port
+        self.models_dir = models_dir
+        self._pid = None
 
     def start(self, model_id: str, ctx_tokens: int, slots: int) -> str:
-        raise NotImplementedError
+        bin_path = self.binary or shutil.which("llama-server") or shutil.which("llama.cpp") or "llama-server"
+        mdir = self.models_dir or (get_paths().data_dir / "models")
+        model_file = mdir / model_id
+
+        argv = [
+            bin_path,
+            "-m",
+            str(model_file),
+            "-c",
+            str(ctx_tokens),
+            "-np",
+            str(slots),
+            "--host",
+            self.host,
+            "--port",
+            str(self.port),
+            "--metrics",
+        ]
+
+        log_path = get_paths().log_dir / "llama-server.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self._pid = get_platform().detach(argv, log_path)
+        return f"http://{self.host}:{self.port}/v1"
 
     def stop(self) -> None:
-        raise NotImplementedError
+        if self._pid is not None:
+            try:
+                get_platform().kill_tree(self._pid)
+            except Exception as _err:  # noqa: BLE001
+                _ = _err
+            finally:
+                self._pid = None
 
     def healthy(self) -> bool:
-        raise NotImplementedError
+        url = f"http://{self.host}:{self.port}/health"
+        try:
+            with httpx.Client(timeout=1.0) as client:
+                resp = client.get(url)
+                return resp.status_code == 200
+        except Exception as _err:  # noqa: BLE001
+            _ = _err
+            return False
+
+    def tokenize(self, content: str) -> list[int]:
+        url = f"http://{self.host}:{self.port}/tokenize"
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                resp = client.post(url, json={"content": content})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    tokens = data.get("tokens", [])
+                    return [int(t) for t in tokens]
+        except Exception as _err:  # noqa: BLE001
+            _ = _err
+        return []
 
 
 class OllamaBackend:
-    name = "ollama"
+    name: str = "ollama"
+    base_url: str
+
+    def __init__(self, base_url: str = "http://127.0.0.1:11434") -> None:
+        self.base_url = base_url.rstrip("/")
 
     def start(self, model_id: str, ctx_tokens: int, slots: int) -> str:
-        raise NotImplementedError
+        return f"{self.base_url}/v1"
 
     def stop(self) -> None:
-        raise NotImplementedError
+        pass
 
     def healthy(self) -> bool:
-        raise NotImplementedError
+        try:
+            with httpx.Client(timeout=1.0) as client:
+                resp = client.get(f"{self.base_url}/api/tags")
+                return resp.status_code == 200
+        except Exception as _err:  # noqa: BLE001
+            _ = _err
+            return False
 
 
 class ExternalBackend:
-    name = "external"
+    name: str = "external"
+    base_url: str
+
+    def __init__(self, base_url: str = "http://127.0.0.1:8000/v1") -> None:
+        self.base_url = base_url.rstrip("/")
 
     def start(self, model_id: str, ctx_tokens: int, slots: int) -> str:
-        raise NotImplementedError
+        return self.base_url
 
     def stop(self) -> None:
-        raise NotImplementedError
+        pass
 
     def healthy(self) -> bool:
-        raise NotImplementedError
+        try:
+            with httpx.Client(timeout=1.0) as client:
+                resp = client.get(f"{self.base_url}/health")
+                return resp.status_code == 200
+        except Exception as _err:  # noqa: BLE001
+            _ = _err
+            return False
