@@ -17,6 +17,32 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/metrics/test_pricing.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/metrics/pricing.py` and `uv run mypy src/asf/m5_shared/metrics/pricing.py` are clean.
 
+from asf.config.loader import load_layered
+
+
 def price_for(provider: str, model: str, tokens_in: int, tokens_out: int) -> tuple[float, bool]:
     """Return (cost, estimated). Missing entries cost 0.0 with estimated=True."""
-    raise NotImplementedError
+    try:
+        pricing = load_layered("pricing.toml")
+    except Exception:
+        return (0.0, True)
+
+    provider_dict = pricing.get(provider)
+    if not isinstance(provider_dict, dict):
+        return (0.0, True)
+
+    model_dict = provider_dict.get(model)
+    if not isinstance(model_dict, dict):
+        return (0.0, True)
+
+    in_rate = model_dict.get("input_per_mtok", model_dict.get("input_per_mtoken", model_dict.get("input")))
+    out_rate = model_dict.get("output_per_mtok", model_dict.get("output_per_mtoken", model_dict.get("output")))
+
+    if in_rate is None or out_rate is None:
+        return (0.0, True)
+
+    try:
+        cost = (tokens_in / 1_000_000.0) * float(in_rate) + (tokens_out / 1_000_000.0) * float(out_rate)
+        return (cost, False)
+    except (ValueError, TypeError):
+        return (0.0, True)

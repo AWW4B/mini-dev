@@ -17,10 +17,45 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/metrics/test_pricing.py` on Windows and Linux once src/asf/m5_shared/metrics/pricing.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/metrics/test_pricing.py` and `uv run mypy tests/m5_shared/metrics/test_pricing.py` are clean.
 
+import pytest
 
-from asf.m5_shared.metrics.pricing import price_for  # noqa: F401
+from asf.m5_shared.metrics.pricing import price_for
 
 
-def test_price_for_meets_contract() -> None:
+def test_price_for_meets_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prove price_for behaves as declared in src/asf/m5_shared/metrics/pricing.py."""
-    raise NotImplementedError("write this test before implementing price_for")
+    # 1. Missing entries return 0.0 with estimated=True
+    cost, est = price_for("unknown_provider", "unknown_model", 1000, 2000)
+    assert cost == 0.0
+    assert est is True
+
+    # 2. Known pricing table
+    fake_pricing = {
+        "anthropic": {
+            "claude-3-5-sonnet": {
+                "input_per_mtok": 3.0,
+                "output_per_mtok": 15.0,
+            },
+            "incomplete_model": {
+                "input_per_mtok": 3.0,
+            },
+        },
+        "currency": "USD",
+    }
+    monkeypatch.setattr(
+        "asf.m5_shared.metrics.pricing.load_layered",
+        lambda _filename: fake_pricing,
+    )
+
+    cost, est = price_for("anthropic", "claude-3-5-sonnet", 1_000_000, 1_000_000)
+    assert cost == 18.0
+    assert est is False
+
+    cost2, est2 = price_for("anthropic", "claude-3-5-sonnet", 500_000, 100_000)
+    assert abs(cost2 - 3.0) < 1e-6
+    assert est2 is False
+
+    # Incomplete pricing entry
+    cost_inc, est_inc = price_for("anthropic", "incomplete_model", 1000, 1000)
+    assert cost_inc == 0.0
+    assert est_inc is True
