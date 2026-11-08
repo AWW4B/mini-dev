@@ -31,9 +31,13 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/config/test_paths.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/config/paths.py` and `uv run mypy src/asf/config/paths.py` are clean.
 
+import os
 from pathlib import Path
 
+import platformdirs
 from pydantic import BaseModel
+
+_APP_NAME = "ai-software-factory"
 
 
 class AppPaths(BaseModel):
@@ -44,14 +48,35 @@ class AppPaths(BaseModel):
 
     def project_dir(self, project_root: Path) -> Path:
         """Return <project_root>/.factory."""
-        raise NotImplementedError
+        d = project_root / ".factory"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
     def state_db(self, project_root: Path) -> Path:
-        raise NotImplementedError
+        return self.project_dir(project_root) / "state.db"
 
     def checkpoints_db(self, project_root: Path) -> Path:
-        raise NotImplementedError
+        return self.project_dir(project_root) / "checkpoints.db"
 
 
 def get_paths() -> AppPaths:
-    raise NotImplementedError
+    """Return AppPaths, honouring FACTORY_HOME for portable/test installs."""
+    factory_home = os.environ.get("FACTORY_HOME")
+    if factory_home:
+        base = Path(factory_home)
+        paths = AppPaths(
+            config_dir=base / "config",
+            data_dir=base / "data",
+            log_dir=base / "logs",
+            cache_dir=base / "cache",
+        )
+    else:
+        paths = AppPaths(
+            config_dir=Path(platformdirs.user_config_dir(_APP_NAME)),
+            data_dir=Path(platformdirs.user_data_dir(_APP_NAME)),
+            log_dir=Path(platformdirs.user_log_dir(_APP_NAME)),
+            cache_dir=Path(platformdirs.user_cache_dir(_APP_NAME)),
+        )
+    for d in (paths.config_dir, paths.data_dir, paths.log_dir, paths.cache_dir):
+        d.mkdir(parents=True, exist_ok=True)
+    return paths

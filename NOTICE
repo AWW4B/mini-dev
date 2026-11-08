@@ -17,7 +17,7 @@
 # DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for this file.
 
 AI Software Factory
-Copyright (c) 2026 [YOUR NAME]
+Copyright (c) 2026 Awwab Ahmad
 
 This product includes third-party software listed below, each under its own
 licence. Their licences are NOT changed by this project's LICENSE.

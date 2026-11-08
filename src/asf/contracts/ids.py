@@ -32,6 +32,8 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/contracts/test_ids.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/contracts/ids.py` and `uv run mypy src/asf/contracts/ids.py` are clean.
 
+import os
+import time
 from typing import NewType
 
 ProjectId = NewType("ProjectId", str)
@@ -46,5 +48,24 @@ ContractId = NewType("ContractId", str)
 
 
 def new_id(prefix: str) -> str:
-    """Return a new unique, sortable id string such as 'task_01J...' (UUIDv7 or ULID text)."""
-    raise NotImplementedError
+    """Return a new unique, sortable id string such as 'task_01J...' (UUIDv7 or ULID text).
+
+    Uses a millisecond-precision timestamp (48 bits) + 80 bits of randomness,
+    encoded as a 26-char Crockford Base32 string (ULID format), prefixed with
+    ``<prefix>_``.  The result is lexicographically sortable by creation time.
+    """
+    # ULID: 48-bit ms timestamp + 80-bit random, Crockford Base32
+    _ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+    ts_ms = int(time.time() * 1000) & 0xFFFF_FFFF_FFFF  # 48 bits
+    rand = int.from_bytes(os.urandom(10), "big")  # 80 bits
+
+    combined = (ts_ms << 80) | rand  # 128 bits total
+
+    chars: list[str] = []
+    for _ in range(26):
+        chars.append(_ENCODING[combined & 0x1F])
+        combined >>= 5
+    ulid = "".join(reversed(chars))
+
+    return f"{prefix}_{ulid}"

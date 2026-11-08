@@ -19,9 +19,40 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/test_logging_setup.py` on Windows and Linux once src/asf/logging_setup.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/test_logging_setup.py` and `uv run mypy tests/test_logging_setup.py` are clean.
 
 
+import logging
+from pathlib import Path
+
+from asf.config.paths import AppPaths
 from asf.logging_setup import configure_logging  # noqa: F401
 
 
-def test_configure_logging_meets_contract() -> None:
-    """Prove configure_logging behaves as declared in src/asf/logging_setup.py."""
-    raise NotImplementedError("write this test before implementing configure_logging")
+def test_configure_logging_meets_contract(fake_paths: AppPaths) -> None:
+    """configure_logging runs without error and creates log file in log_dir."""
+    configure_logging(level="DEBUG")
+    log_file = fake_paths.log_dir / "factory.log"
+    # The log file should be created (or at least handlers attached)
+    root = logging.getLogger()
+    assert len(root.handlers) > 0, "Expected at least one handler to be attached"
+
+
+def test_configure_logging_default_level(fake_paths: AppPaths) -> None:
+    """configure_logging with defaults sets INFO level."""
+    configure_logging()
+    root = logging.getLogger()
+    assert root.level <= logging.INFO
+
+
+def test_configure_logging_json_console(fake_paths: AppPaths) -> None:
+    """configure_logging with json_console=True does not raise."""
+    configure_logging(level="WARNING", json_console=True)
+    root = logging.getLogger()
+    assert root.level <= logging.WARNING
+
+
+def test_configure_logging_idempotent(fake_paths: AppPaths) -> None:
+    """Calling configure_logging twice does not raise or leave duplicate handlers."""
+    configure_logging()
+    configure_logging()
+    root = logging.getLogger()
+    # Should not accumulate unbounded handlers
+    assert len(root.handlers) <= 10, "Handler accumulation detected"

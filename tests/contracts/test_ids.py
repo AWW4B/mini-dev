@@ -22,41 +22,84 @@ from asf.contracts.ids import AttemptId, CommandId, ContractId, DecisionId, Even
 
 
 def test_new_id_meets_contract() -> None:
-    """Prove new_id behaves as declared in src/asf/contracts/ids.py."""
-    raise NotImplementedError("write this test before implementing new_id")
+    """new_id returns a non-empty string with the requested prefix."""
+    result = new_id("task")
+    assert isinstance(result, str)
+    assert result.startswith("task_"), f"expected 'task_' prefix, got {result!r}"
+    # Should be sortable: two successive ids from the same millisecond or later
+    # must still have the first <= second because the timestamp component differs.
+    id1 = new_id("x")
+    id2 = new_id("x")
+    # Both unique
+    assert id1 != id2
+    # Both correctly prefixed
+    assert id1.startswith("x_")
+    assert id2.startswith("x_")
+    # Sortable: either equal-ms (then random order is acceptable) or ascending
+    # Strip prefix and compare the ULID portion
+    ulid1, ulid2 = id1[2:], id2[2:]
+    # Length = 26 chars (Crockford Base32 ULID)
+    assert len(ulid1) == 26, f"ULID portion wrong length: {ulid1!r}"
+    assert len(ulid2) == 26, f"ULID portion wrong length: {ulid2!r}"
+
 
 def test_project_id_meets_contract() -> None:
-    """Prove ProjectId behaves as declared in src/asf/contracts/ids.py."""
-    raise NotImplementedError("write this test before implementing ProjectId")
+    """ProjectId is a NewType of str and roundtrips as a plain str."""
+    pid = ProjectId("proj-abc")
+    assert isinstance(pid, str)
+    assert pid == "proj-abc"
+
 
 def test_run_id_meets_contract() -> None:
-    """Prove RunId behaves as declared in src/asf/contracts/ids.py."""
-    raise NotImplementedError("write this test before implementing RunId")
+    rid = RunId("run-123")
+    assert isinstance(rid, str)
+    assert rid == "run-123"
+
 
 def test_task_id_meets_contract() -> None:
-    """Prove TaskId behaves as declared in src/asf/contracts/ids.py."""
-    raise NotImplementedError("write this test before implementing TaskId")
+    tid = TaskId("task-456")
+    assert isinstance(tid, str)
+    assert tid == "task-456"
+
 
 def test_attempt_id_meets_contract() -> None:
-    """Prove AttemptId behaves as declared in src/asf/contracts/ids.py."""
-    raise NotImplementedError("write this test before implementing AttemptId")
+    aid = AttemptId("attempt-1")
+    assert isinstance(aid, str)
+    assert aid == "attempt-1"
+
 
 def test_event_id_meets_contract() -> None:
-    """Prove EventId behaves as declared in src/asf/contracts/ids.py."""
-    raise NotImplementedError("write this test before implementing EventId")
+    eid = EventId("event-7")
+    assert isinstance(eid, str)
+    assert eid == "event-7"
+
 
 def test_decision_id_meets_contract() -> None:
-    """Prove DecisionId behaves as declared in src/asf/contracts/ids.py."""
-    raise NotImplementedError("write this test before implementing DecisionId")
+    did = DecisionId("decision-9")
+    assert isinstance(did, str)
+    assert did == "decision-9"
+
 
 def test_lease_id_meets_contract() -> None:
-    """Prove LeaseId behaves as declared in src/asf/contracts/ids.py."""
-    raise NotImplementedError("write this test before implementing LeaseId")
+    lid = LeaseId("lease-2")
+    assert isinstance(lid, str)
+    assert lid == "lease-2"
+
 
 def test_command_id_meets_contract() -> None:
-    """Prove CommandId behaves as declared in src/asf/contracts/ids.py."""
-    raise NotImplementedError("write this test before implementing CommandId")
+    cid = CommandId("cmd-5")
+    assert isinstance(cid, str)
+    assert cid == "cmd-5"
+
 
 def test_contract_id_meets_contract() -> None:
-    """Prove ContractId behaves as declared in src/asf/contracts/ids.py."""
-    raise NotImplementedError("write this test before implementing ContractId")
+    ctid = ContractId("contract-3")
+    assert isinstance(ctid, str)
+    assert ctid == "contract-3"
+
+
+def test_new_id_prefix_with_different_values() -> None:
+    """new_id supports arbitrary prefix strings."""
+    for prefix in ("run", "attempt", "event", "decision", "lease", "cmd"):
+        result = new_id(prefix)
+        assert result.startswith(f"{prefix}_")

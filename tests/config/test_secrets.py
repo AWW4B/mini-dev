@@ -19,13 +19,80 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/config/test_secrets.py` on Windows and Linux once src/asf/config/secrets.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/config/test_secrets.py` and `uv run mypy tests/config/test_secrets.py` are clean.
 
 
+import os
+from pathlib import Path
+
+import pytest
+
+from asf.config.paths import AppPaths
 from asf.config.secrets import get_api_key, key_sources  # noqa: F401
 
 
-def test_get_api_key_meets_contract() -> None:
-    """Prove get_api_key behaves as declared in src/asf/config/secrets.py."""
-    raise NotImplementedError("write this test before implementing get_api_key")
+def test_get_api_key_from_env(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_api_key reads from FACTORY_<PROVIDER>_API_KEY env var."""
+    monkeypatch.setenv("FACTORY_OPENAI_API_KEY", "sk-test-env-key")
+    result = get_api_key("openai")
+    assert result == "sk-test-env-key"
 
-def test_key_sources_meets_contract() -> None:
-    """Prove key_sources behaves as declared in src/asf/config/secrets.py."""
-    raise NotImplementedError("write this test before implementing key_sources")
+
+def test_get_api_key_from_dotenv(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_api_key falls back to .env file in config dir."""
+    monkeypatch.delenv("FACTORY_ANTHROPIC_API_KEY", raising=False)
+    env_file = fake_paths.config_dir / ".env"
+    env_file.write_text("FACTORY_ANTHROPIC_API_KEY=ant-test-key\n", encoding="utf-8")
+
+    # Make sure no env var shadows it
+    result = get_api_key("anthropic")
+    assert result == "ant-test-key"
+
+
+def test_get_api_key_missing(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_api_key returns None when no key is configured."""
+    monkeypatch.delenv("FACTORY_OPENAI_API_KEY", raising=False)
+    result = get_api_key("openai")
+    assert result is None
+
+
+def test_get_api_key_meets_contract(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_api_key returns str or None, never raises."""
+    result = get_api_key("unknown_provider_xyz")
+    assert result is None or isinstance(result, str)
+
+
+def test_key_sources_meets_contract(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """key_sources returns a dict mapping known providers to source names."""
+    monkeypatch.delenv("FACTORY_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("FACTORY_ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("FACTORY_GOOGLE_API_KEY", raising=False)
+
+    sources = key_sources()
+    assert isinstance(sources, dict)
+    # All known providers should appear
+    for provider in ("openai", "anthropic", "google"):
+        assert provider in sources
+        assert sources[provider] in ("keyring", "env", "dotenv", "missing")
+
+
+def test_key_sources_env_provider(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """key_sources reports 'env' when env var is set."""
+    monkeypatch.setenv("FACTORY_OPENAI_API_KEY", "sk-test")
+    sources = key_sources()
+    assert sources.get("openai") == "env"
+
+
+def test_key_sources_dotenv_provider(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """key_sources reports 'dotenv' when key is in .env file."""
+    monkeypatch.delenv("FACTORY_ANTHROPIC_API_KEY", raising=False)
+    env_file = fake_paths.config_dir / ".env"
+    env_file.write_text("FACTORY_ANTHROPIC_API_KEY=ant-dotenv-key\n", encoding="utf-8")
+
+    sources = key_sources()
+    assert sources.get("anthropic") == "dotenv"
+
+
+def test_key_sources_reports_missing(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """key_sources reports 'missing' for providers with no key anywhere."""
+    monkeypatch.delenv("FACTORY_GOOGLE_API_KEY", raising=False)
+    sources = key_sources()
+    # google should be missing (no env, no dotenv set for it)
+    assert sources.get("google") in ("keyring", "missing")

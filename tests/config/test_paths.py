@@ -19,13 +19,64 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/config/test_paths.py` on Windows and Linux once src/asf/config/paths.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/config/test_paths.py` and `uv run mypy tests/config/test_paths.py` are clean.
 
 
+import os
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
 from asf.config.paths import AppPaths, get_paths  # noqa: F401
 
 
-def test_app_paths_meets_contract() -> None:
-    """Prove AppPaths behaves as declared in src/asf/config/paths.py."""
-    raise NotImplementedError("write this test before implementing AppPaths")
+def test_app_paths_meets_contract(tmp_path: Path) -> None:
+    """AppPaths fields are plain Path objects; helper methods return correct subpaths."""
+    paths = AppPaths(
+        config_dir=tmp_path / "config",
+        data_dir=tmp_path / "data",
+        log_dir=tmp_path / "logs",
+        cache_dir=tmp_path / "cache",
+    )
+    assert paths.config_dir == tmp_path / "config"
+    assert paths.data_dir == tmp_path / "data"
+    assert paths.log_dir == tmp_path / "logs"
+    assert paths.cache_dir == tmp_path / "cache"
 
-def test_get_paths_meets_contract() -> None:
-    """Prove get_paths behaves as declared in src/asf/config/paths.py."""
-    raise NotImplementedError("write this test before implementing get_paths")
+    # project_dir returns <root>/.factory
+    proj_root = tmp_path / "myproject"
+    proj_root.mkdir()
+    proj_dir = paths.project_dir(proj_root)
+    assert proj_dir == proj_root / ".factory"
+    assert proj_dir.is_dir()  # created lazily
+
+    # state_db lives inside project_dir
+    state_db = paths.state_db(proj_root)
+    assert state_db == proj_root / ".factory" / "state.db"
+
+    # checkpoints_db lives inside project_dir
+    ckpt_db = paths.checkpoints_db(proj_root)
+    assert ckpt_db == proj_root / ".factory" / "checkpoints.db"
+
+
+def test_get_paths_meets_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_paths() honours FACTORY_HOME and creates directories lazily."""
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path))
+    paths = get_paths()
+
+    assert paths.config_dir == tmp_path / "config"
+    assert paths.data_dir == tmp_path / "data"
+    assert paths.log_dir == tmp_path / "logs"
+    assert paths.cache_dir == tmp_path / "cache"
+
+    # Directories must be created by get_paths
+    for d in (paths.config_dir, paths.data_dir, paths.log_dir, paths.cache_dir):
+        assert d.is_dir(), f"Expected {d} to exist"
+
+
+def test_get_paths_without_factory_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_paths() without FACTORY_HOME uses platformdirs and returns an AppPaths."""
+    monkeypatch.delenv("FACTORY_HOME", raising=False)
+    paths = get_paths()
+    assert isinstance(paths, AppPaths)
+    # Directories should still be Path objects
+    assert isinstance(paths.config_dir, Path)
+    assert isinstance(paths.data_dir, Path)
