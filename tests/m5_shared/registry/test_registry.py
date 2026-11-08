@@ -17,10 +17,96 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/registry/test_registry.py` on Windows and Linux once src/asf/m5_shared/registry/registry.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/registry/test_registry.py` and `uv run mypy tests/m5_shared/registry/test_registry.py` are clean.
 
+import json
+import sqlite3
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
-from asf.m5_shared.registry.registry import ContractRegistry  # noqa: F401
+from asf.m5_shared.registry.registry import ContractRegistry
 
 
-def test_contract_registry_meets_contract() -> None:
+def _create_contracts_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS contracts (
+            contract_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            payload TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT
+        );
+        """
+    )
+    conn.commit()
+
+
+def test_contract_registry_meets_contract(tmp_path: Path) -> None:
     """Prove ContractRegistry behaves as declared in src/asf/m5_shared/registry/registry.py."""
-    raise NotImplementedError("write this test before implementing ContractRegistry")
+    db_file = tmp_path / "registry.db"
+    conn = sqlite3.connect(str(db_file))
+    conn.row_factory = sqlite3.Row
+    _create_contracts_table(conn)
+
+    decisions: list[Any] = []
+
+    class FakeBroker:
+        def request(self, req: Any) -> None:
+            decisions.append(req)
+
+    store = SimpleNamespace(conn=conn)
+    broker = FakeBroker()
+    registry = ContractRegistry(store=store, broker=broker)  # type: ignore[arg-type]
+
+    op1 = {
+        "name": "login",
+        "signature": "login(user: str, secret: str) -> Token",
+        "params": {"user": "name"},
+        "returns": "Token",
+        "errors": [],
+        "example": 'login("alice", "pw")',
+    }
+
+    spec1 = {
+        "contract_id": "auth-v1",
+        "module_id": "auth",
+        "version": "1.0.0",
+        "status": "DRAFT",
+        "operations": [op1],
+        "data_schemas": {"Token": "token: str"},
+        "invariants": [],
+        "producer_task": None,
+        "consumer_tasks": [],
+        "contract_test_refs": [],
+    }
+
+    # 1. Register new contract
+    registered = registry.register(SimpleNamespace(**spec1, model_dump_json=lambda: json.dumps(spec1)))  # type: ignore[arg-type]
+    assert registered.module_id == "auth"
+    assert len(decisions) == 0
+
+    # 2. Query capsules
+    q = SimpleNamespace(module_ids=["auth"], task_id=None, pinned_versions={})
+    capsules = registry.query(q)  # type: ignore[arg-type]
+    assert len(capsules) == 1
+    assert capsules[0].module_id == "auth"
+    assert capsules[0].operation == "login"
+    assert 3 <= len(capsules[0].lines) <= 5
+
+    # 3. Register breaking change: triggers broker request
+    spec_break = dict(spec1)
+    spec_break["contract_id"] = "auth-v2"
+    spec_break["version"] = "2.0.0"
+    spec_break["operations"] = []  # removed operation
+    registry.register(SimpleNamespace(**spec_break, model_dump_json=lambda: json.dumps(spec_break)))  # type: ignore[arg-type]
+    assert len(decisions) == 1
+
+    # 4. Promote
+    registry.promote("auth-v1", SimpleNamespace(value="VERIFIED"))  # type: ignore[arg-type]
+    row = conn.execute("SELECT payload FROM contracts WHERE contract_id = 'auth-v1'").fetchone()
+    assert row is not None
+    data = json.loads(row["payload"])
+    assert data["status"] == "VERIFIED"
+
+    conn.close()
