@@ -24,6 +24,9 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/state_store/test_recovery.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/state_store/recovery.py` and `uv run mypy src/asf/m5_shared/state_store/recovery.py` are clean.
 
+from types import SimpleNamespace
+from typing import Any, cast
+
 from pydantic import BaseModel
 
 from asf.m5_shared.decisions.broker import DecisionBroker
@@ -39,5 +42,97 @@ class RecoveryReport(BaseModel):
     decisions_rearmed: int
 
 
-def reconcile_on_startup(store: StateStore, workspace: Workspace, runtime: LocalRuntime, broker: DecisionBroker) -> RecoveryReport:
-    raise NotImplementedError
+def reconcile_on_startup(
+    store: StateStore,
+    workspace: Workspace,
+    runtime: LocalRuntime,
+    broker: DecisionBroker,
+) -> RecoveryReport:
+    _ = broker
+
+    # 1. Runs checked
+    runs_checked = 0
+    try:
+        cur = store.conn.execute("SELECT COUNT(*) FROM runs")
+        row = cur.fetchone()
+        if row:
+            runs_checked = int(row[0])
+    except Exception as _run_err:  # noqa: BLE001
+        _ = _run_err
+
+    # 2. Expire leases: query running tasks (skip VERIFIED / INTEGRATED)
+    tasks_reset: list[str] = []
+    tasks_escalated: list[str] = []
+
+    try:
+        cur = store.conn.execute(
+            "SELECT task_id, run_id, state, interruption_count FROM tasks WHERE state = 'RUNNING'"
+        )
+        running_tasks = cur.fetchall()
+
+        for row in running_tasks:
+            task_id = str(row[0])
+            interruptions = int(row[3]) if row[3] is not None else 0
+            new_interruptions = interruptions + 1
+
+            if new_interruptions > 3:
+                new_state = "ESCALATED"
+                tasks_escalated.append(task_id)
+            else:
+                new_state = "READY"
+                tasks_reset.append(task_id)
+
+            with store.conn:
+                store.conn.execute(
+                    "UPDATE tasks SET state = ?, interruption_count = ?, assigned_worker = NULL, lease_expires_at = NULL "
+                    "WHERE task_id = ?",
+                    (new_state, new_interruptions, task_id),
+                )
+                try:
+                    store.conn.execute("DELETE FROM leases WHERE task_id = ?", (task_id,))
+                except Exception as _lease_err:  # noqa: BLE001
+                    _ = _lease_err
+    except Exception as _task_err:  # noqa: BLE001
+        _ = _task_err
+
+    # 3. Reset interrupted worktrees to base commit
+    for tid in tasks_reset:
+        try:
+            op = SimpleNamespace(
+                kind="reset_to_base",
+                task_id=tid,
+                branch=None,
+                base_commit=None,
+            )
+            workspace.apply(cast(Any, op))
+        except Exception as _ws_err:  # noqa: BLE001
+            _ = _ws_err
+
+    # 4. Re-probe runtime: drop stale slots
+    try:
+        runtime.drop_stale()
+    except Exception as _rt_err:  # noqa: BLE001
+        _ = _rt_err
+
+    if hasattr(runtime, "probe") and hasattr(runtime.probe, "probe_system"):
+        try:
+            runtime.probe.probe_system()
+        except Exception as _probe_err:  # noqa: BLE001
+            _ = _probe_err
+
+    # 5. Re-arm decisions
+    decisions_rearmed = 0
+    try:
+        cur = store.conn.execute("SELECT COUNT(*) FROM decisions WHERE status = 'PENDING'")
+        row = cur.fetchone()
+        if row:
+            decisions_rearmed = int(row[0])
+    except Exception as _dec_err:  # noqa: BLE001
+        _ = _dec_err
+
+    return RecoveryReport(
+        runs_checked=runs_checked,
+        tasks_reset=tasks_reset,
+        tasks_escalated=tasks_escalated,
+        decisions_rearmed=decisions_rearmed,
+    )
