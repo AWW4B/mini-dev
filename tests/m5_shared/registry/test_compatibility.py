@@ -17,10 +17,72 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/registry/test_compatibility.py` on Windows and Linux once src/asf/m5_shared/registry/compatibility.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/registry/test_compatibility.py` and `uv run mypy tests/m5_shared/registry/test_compatibility.py` are clean.
 
+from types import SimpleNamespace
 
-from asf.m5_shared.registry.compatibility import classify_change  # noqa: F401
+from asf.m5_shared.registry.compatibility import classify_change
+
+
+def _make_op(name: str, signature: str = "() -> None", returns: str = "None") -> SimpleNamespace:
+    return SimpleNamespace(
+        name=name,
+        signature=signature,
+        params={},
+        returns=returns,
+        errors=[],
+        example="",
+    )
 
 
 def test_classify_change_meets_contract() -> None:
     """Prove classify_change behaves as declared in src/asf/m5_shared/registry/compatibility.py."""
-    raise NotImplementedError("write this test before implementing classify_change")
+    spec1 = SimpleNamespace(
+        operations=[_make_op("get_user", "(id: int) -> User", "User")],
+        data_schemas={"User": "id: int, name: str"},
+        invariants=["id > 0"],
+    )
+
+    # 1. New contract (old is None)
+    assert classify_change(None, spec1) == "new"  # type: ignore[arg-type]
+
+    # 2. Patch change (same ops, same signatures, doc/example update)
+    spec_patch = SimpleNamespace(
+        operations=[_make_op("get_user", "(id: int) -> User", "User")],
+        data_schemas={"User": "id: int, name: str"},
+        invariants=["id > 0"],
+    )
+    assert classify_change(spec1, spec_patch) == "patch"  # type: ignore[arg-type]
+
+    # 3. Minor change (additive backwards-compatible operation or schema)
+    spec_minor = SimpleNamespace(
+        operations=[
+            _make_op("get_user", "(id: int) -> User", "User"),
+            _make_op("list_users", "() -> list[User]", "list[User]"),
+        ],
+        data_schemas={"User": "id: int, name: str"},
+        invariants=["id > 0"],
+    )
+    assert classify_change(spec1, spec_minor) == "minor"  # type: ignore[arg-type]
+
+    # 4. Breaking change: operation signature changed
+    spec_break_sig = SimpleNamespace(
+        operations=[_make_op("get_user", "(id: str) -> User", "User")],
+        data_schemas={"User": "id: int, name: str"},
+        invariants=["id > 0"],
+    )
+    assert classify_change(spec1, spec_break_sig) == "breaking"  # type: ignore[arg-type]
+
+    # 5. Breaking change: operation removed
+    spec_break_removed = SimpleNamespace(
+        operations=[],
+        data_schemas={"User": "id: int, name: str"},
+        invariants=["id > 0"],
+    )
+    assert classify_change(spec1, spec_break_removed) == "breaking"  # type: ignore[arg-type]
+
+    # 6. Breaking change: schema altered
+    spec_break_schema = SimpleNamespace(
+        operations=[_make_op("get_user", "(id: int) -> User", "User")],
+        data_schemas={"User": "uuid: str"},
+        invariants=["id > 0"],
+    )
+    assert classify_change(spec1, spec_break_schema) == "breaking"  # type: ignore[arg-type]
