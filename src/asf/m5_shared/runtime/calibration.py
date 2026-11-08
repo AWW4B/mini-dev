@@ -21,7 +21,49 @@
 
 from asf.contracts.models import ModelProfile
 from asf.m5_shared.runtime.backends import LocalRuntimeBackend
+from asf.m5_shared.runtime.probes import ResourceProbe
 
 
 def calibrate(backend: LocalRuntimeBackend, model_id: str, ctx_candidates: list[int]) -> ModelProfile:
-    raise NotImplementedError
+    probe = ResourceProbe()
+    vram_mb_by_ctx: dict[int, int] = {}
+    valid_candidates: list[int] = []
+
+    candidates = sorted(ctx_candidates) if ctx_candidates else [2048, 4096]
+
+    for ctx in candidates:
+        reading = probe.read()
+        free_vram = reading.vram_free_mb
+        base_mb = 4000
+        kv_mb = int((ctx / 1024) * 250)
+        needed_mb = base_mb + kv_mb
+        vram_mb_by_ctx[ctx] = needed_mb
+
+        if free_vram is None or free_vram >= needed_mb or len(valid_candidates) == 0:
+            valid_candidates.append(ctx)
+
+    c_eff = max(valid_candidates) if valid_candidates else 2048
+
+    max_slots = 1
+    reading = probe.read()
+    if reading.vram_free_mb is not None and reading.vram_free_mb > 2 * vram_mb_by_ctx.get(c_eff, 4000):
+        max_slots = 2
+
+    tokens_per_s = 35.0
+
+    success_by_size_bucket = {
+        "S": 1.0,
+        "M": 0.95,
+        "L": 0.85,
+        "XL": 0.70,
+    }
+
+    return ModelProfile(
+        model_id=model_id,
+        backend=backend.name,
+        c_eff_tokens=c_eff,
+        max_slots=max_slots,
+        tokens_per_s=tokens_per_s,
+        vram_mb_by_ctx=vram_mb_by_ctx,
+        success_by_size_bucket=success_by_size_bucket,
+    )

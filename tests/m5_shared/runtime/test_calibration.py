@@ -21,6 +21,30 @@
 from asf.m5_shared.runtime.calibration import calibrate  # noqa: F401
 
 
+class FakeBackend:
+    name = "llama-server"
+
+    def start(self, model_id: str, ctx_tokens: int, slots: int) -> str:
+        return "http://127.0.0.1:8080/v1"
+
+    def stop(self) -> None:
+        pass
+
+    def healthy(self) -> bool:
+        return True
+
+
 def test_calibrate_meets_contract() -> None:
     """Prove calibrate behaves as declared in src/asf/m5_shared/runtime/calibration.py."""
-    raise NotImplementedError("write this test before implementing calibrate")
+    backend = FakeBackend()
+    candidates = [2048, 4096, 8192]
+    profile = calibrate(backend, "qwen2.5-coder-7b", candidates)
+
+    assert profile.model_id == "qwen2.5-coder-7b"
+    assert profile.backend == "llama-server"
+    assert profile.c_eff_tokens in candidates
+    assert profile.max_slots in (1, 2)
+    assert profile.tokens_per_s > 0
+    assert len(profile.vram_mb_by_ctx) == len(candidates)
+    assert "S" in profile.success_by_size_bucket
+    assert "M" in profile.success_by_size_bucket
