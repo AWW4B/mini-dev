@@ -19,21 +19,116 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/platform/test_base.py` on Windows and Linux once src/asf/platform/base.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/platform/test_base.py` and `uv run mypy tests/platform/test_base.py` are clean.
 
 
+from pathlib import Path
+from typing import Any
+
 from asf.platform.base import PlatformAdapter, ProcessResult, SandboxBackend, SandboxSpec  # noqa: F401
 
 
-def test_sandbox_spec_meets_contract() -> None:
+def test_sandbox_spec_meets_contract(tmp_path: Path) -> None:
     """Prove SandboxSpec behaves as declared in src/asf/platform/base.py."""
-    raise NotImplementedError("write this test before implementing SandboxSpec")
+    spec = SandboxSpec(
+        argv=["python", "-c", "print(1)"],
+        cwd=tmp_path,
+        writable_paths=[tmp_path / "out"],
+        readable_paths=[tmp_path / "in"],
+        network=False,
+        timeout_s=60,
+        env={"FOO": "BAR"},
+        extra_fds=[],
+    )
+    assert spec.argv == ["python", "-c", "print(1)"]
+    assert spec.cwd == tmp_path
+    assert spec.network is False
+    assert spec.timeout_s == 60
+    assert spec.env == {"FOO": "BAR"}
+
+    # Default values check
+    default_spec = SandboxSpec(
+        argv=["echo", "hi"],
+        cwd=tmp_path,
+        writable_paths=[],
+        readable_paths=[],
+    )
+    assert default_spec.network is False
+    assert default_spec.timeout_s == 120
+    assert default_spec.env == {}
+    assert default_spec.extra_fds == []
+
 
 def test_process_result_meets_contract() -> None:
     """Prove ProcessResult behaves as declared in src/asf/platform/base.py."""
-    raise NotImplementedError("write this test before implementing ProcessResult")
+    res = ProcessResult(
+        exit_code=0,
+        stdout=b"output",
+        stderr=b"",
+        timed_out=False,
+        duration_ms=42,
+    )
+    assert res.exit_code == 0
+    assert res.stdout == b"output"
+    assert res.stderr == b""
+    assert res.timed_out is False
+    assert res.duration_ms == 42
+
 
 def test_sandbox_backend_meets_contract() -> None:
-    """Prove SandboxBackend behaves as declared in src/asf/platform/base.py."""
-    raise NotImplementedError("write this test before implementing SandboxBackend")
+    """Prove SandboxBackend protocol can be satisfied by a class."""
 
-def test_platform_adapter_meets_contract() -> None:
-    """Prove PlatformAdapter behaves as declared in src/asf/platform/base.py."""
-    raise NotImplementedError("write this test before implementing PlatformAdapter")
+    class DummySandboxBackend:
+        name = "dummy"
+        tier: Any = "A"
+
+        def available(self) -> bool:
+            return True
+
+        def run(self, spec: SandboxSpec) -> ProcessResult:
+            return ProcessResult(
+                exit_code=0,
+                stdout=b"",
+                stderr=b"",
+                timed_out=False,
+                duration_ms=10,
+            )
+
+    backend: SandboxBackend = DummySandboxBackend()
+    assert backend.name == "dummy"
+    assert backend.available() is True
+
+
+def test_platform_adapter_meets_contract(tmp_path: Path) -> None:
+    """Prove PlatformAdapter protocol can be satisfied by a class."""
+
+    class DummyAdapter:
+        name = "dummy"
+
+        def sandbox(self) -> SandboxBackend:
+            raise NotImplementedError
+
+        def run_process(self, argv: list[str], cwd: Path, timeout_s: int, env: dict[str, str] | None = None) -> ProcessResult:
+            return ProcessResult(
+                exit_code=0,
+                stdout=b"",
+                stderr=b"",
+                timed_out=False,
+                duration_ms=5,
+            )
+
+        def kill_tree(self, pid: int) -> None:
+            pass
+
+        def lock_file(self, path: Path, timeout_s: float) -> object:
+            return None
+
+        def resolve_within(self, root: Path, candidate: str) -> Path:
+            return root / candidate
+
+        def install_interrupt_handler(self, on_interrupt: object) -> None:
+            pass
+
+        def detach(self, argv: list[str], log_path: Path) -> int:
+            return 1234
+
+    adapter: PlatformAdapter = DummyAdapter()
+    assert adapter.name == "dummy"
+    assert adapter.resolve_within(tmp_path, "sub") == tmp_path / "sub"
