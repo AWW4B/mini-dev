@@ -1,0 +1,41 @@
+# FILE: src/asf/contracts/budget.py
+# ROLE: Defines RunBudget limits and counters.
+# ARCH REF: p06 budgets; p15 RunBudget; D-27
+# OWNS: Budget shape
+# DOES NOT OWN: Enforcement (gateway, decomposition, scheduler)
+# CONNECTS TO (external boundaries only):
+#   - imports from src/asf/contracts/ids.py: RunId (typed ids)
+#   - called by src/asf/m5_shared/metrics/advisories.py: RunBudget
+#   - called by src/asf/m5_shared/gateway/gateway.py: RunBudget
+#   - called by src/asf/m3_orchestration/run_graph.py: RunBudget
+#   - called by tests/contracts/test_budget.py: RunBudget
+#   - emits/consumes: none
+# INSTRUCTIONS (strict, imperative):
+#   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
+#   2. Keep every public name and signature declared below exactly as written; they are the contract other files rely on.
+#   3. Use only the standard library, the pinned dependencies in pyproject.toml, and the files listed under CONNECTS TO. Ask before adding a dependency.
+#   4. Open text files with encoding="utf-8" explicitly.
+#   5. This file is declarations only: Pydantic models, enums and type aliases. Add field validators only where the docstring of a field states a constraint.
+#   6. Every model must round-trip through model_dump_json() / model_validate_json() unchanged; the JSON Schema exported from these models is the published contract (D-39: no hand-written JSON).
+#   7. Changing a field name or type is a contract change: stop and report instead.
+# FORBIDDEN: shell=True; os.system; hardcoded absolute paths; container runtimes; importing project modules not listed under CONNECTS TO; printing secrets or API keys; business logic; I/O; imports from asf.m1-m5 packages, asf.cli, asf.web or asf.platform
+# ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
+# DONE WHEN: (1) tests/contracts/test_budget.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/contracts/budget.py` and `uv run mypy src/asf/contracts/budget.py` are clean.
+
+from pydantic import BaseModel, Field
+
+from asf.contracts.ids import RunId
+
+
+class RunBudget(BaseModel):
+    run_id: RunId
+    max_remote_tokens: int
+    max_local_tokens: int
+    max_api_spend: float = Field(description="in the currency used by pricing.toml")
+    max_wall_clock_s: int
+    max_task_nodes: int
+    used_remote_tokens: int = 0
+    used_local_tokens: int = 0
+    used_api_spend: float = 0.0
+    used_task_nodes: int = 0
+    alert_fraction: float = 0.8

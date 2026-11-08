@@ -1,0 +1,26 @@
+# FILE: .gitattributes
+# ROLE: Normalises line endings to LF everywhere and marks binary artefacts.
+# ARCH REF: FR-4; D-36
+# OWNS: Line-ending and binary rules
+# DOES NOT OWN: Ignore rules (.gitignore)
+# CONNECTS TO (external boundaries only):
+#   - imports from none: none
+#   - emits/consumes: none
+# INSTRUCTIONS (strict, imperative):
+#   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
+#   2. Keep `* text=auto eol=lf`; add new binary extensions below rather than per-file rules.
+# FORBIDDEN: CRLF-specific rules; per-OS exceptions
+# ERRORS: A wrong rule shows up as whole-file diffs after checkout on Windows.
+# DONE WHEN: (1) `git ls-files --eol` shows lf for all text files on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file.
+* text=auto eol=lf
+*.gguf binary
+*.safetensors binary
+*.bin binary
+*.pt binary
+*.onnx binary
+*.png binary
+*.jpg binary
+*.pdf binary
+*.db binary
+*.sqlite binary
+*.zip binary

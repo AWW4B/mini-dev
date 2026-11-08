@@ -1,0 +1,249 @@
+# FILE: NOTICE
+# ROLE: Third-party licence notice for every locked package, with copyleft and proprietary flags.
+# ARCH REF: FR-5; D-44
+# OWNS: Third-party attribution and compatibility flags
+# DOES NOT OWN: This project's own terms (LICENSE)
+# CONNECTS TO (external boundaries only):
+#   - imports from scripts/gen_notice.py: main (regeneration)
+#   - emits/consumes: none
+# INSTRUCTIONS (strict, imperative):
+#   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
+#   2. Keep every public name and signature declared below exactly as written; they are the contract other files rely on.
+#   3. Use only the standard library, the pinned dependencies in pyproject.toml, and the files listed under CONNECTS TO. Ask before adding a dependency.
+#   4. Open text files with encoding="utf-8" explicitly.
+#   5. Regenerate the package list with scripts/gen_notice.py after any lock change and review new flags before publishing.
+# FORBIDDEN: shell=True; os.system; hardcoded absolute paths; container runtimes; importing project modules not listed under CONNECTS TO; printing secrets or API keys
+# ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
+# DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for this file.
+
+AI Software Factory
+Copyright (c) 2026 [YOUR NAME]
+
+This product includes third-party software listed below, each under its own
+licence. Their licences are NOT changed by this project's LICENSE.
+
+== Compatibility review (owner action needed) ==
+- No GPL or AGPL Python package is in the lockfile. Policy: GPL/AGPL is blocked unless approved in writing.
+- Weak copyleft (MPL-2.0): certifi, hypothesis, orjson, pathspec, tqdm.
+  File-level obligations only; unmodified use is compatible, but modified MPL files must stay MPL.
+- Proprietary / undeclared NVIDIA CUDA packages (16) arrive only through the optional
+  [docs-advanced] extra (Docling -> torch) on Linux. Their EULA restricts redistribution: never bundle them.
+- System tool (not a Python dependency, not distributed): bubblewrap (LGPL-2.0-or-later) is invoked as a separate process.
+- Serena (MIT) was evaluated and is excluded.
+- Licence data: PyPI metadata on 2026-11-08 for the exact locked versions; regenerate with scripts/gen_notice.py.
+
+== Packages (name==version, scope, declared licence, flag) ==
+aiosqlite==0.22.1           base                 MIT License
+annotated-doc==0.0.5            base                 MIT
+annotated-types==0.8.0            base                 MIT
+anyio==4.16.0           base                 MIT
+attrs==26.1.0           base                 MIT
+beautifulsoup4==4.15.0           base                 MIT License
+certifi==2026.10.23       base                 Mozilla Public License 2.0 (MPL 2.0)                                     FLAG: weak copyleft
+cffi==2.1.1            base                 MIT-0
+charset-normalizer==3.5.2            base                 MIT
+click==8.5.1            base                 BSD-3-Clause
+cobble==0.1.4            base                 BSD License
+colorama==0.4.6            base                 BSD License
+cryptography==50.0.2           base                 Apache-2.0 OR BSD-3-Clause
+defusedxml==0.7.1            base                 Python Software Foundation License
+distro==1.9.0            base                 Apache Software License
+flatbuffers==25.12.19         base                 Apache Software License
+h11==0.16.0           base                 MIT License
+httpcore==1.0.9            base                 BSD-3-Clause
+httpcore2==2.16.0           base                 BSD-3-Clause
+httpx==0.28.1           base                 BSD License
+httpx-sse==0.4.3            base                 MIT
+httpx2==2.16.0           base                 BSD-3-Clause
+httpx2-jsfetch==1.0              base                 BSD-3-Clause
+idna==3.20             base                 BSD-3-Clause
+jaraco-classes==3.4.0            base                 MIT License
+jaraco-context==6.1.2            base                 MIT
+jaraco-functools==4.6.0            base                 MIT
+jeepney==0.9.0            base                 MIT
+jiter==0.19.0           base                 MIT
+jsonpatch==1.44             base                 BSD-3-Clause
+jsonpointer==3.10             base                 BSD License
+jsonschema==4.26.0           base                 MIT
+jsonschema-specifications==2025.9.1         base                 MIT
+keyring==25.7.0           base                 MIT
+langchain-core==1.7.6            base                 MIT License
+langchain-mcp-adapters==0.3.2            base                 MIT
+langchain-openai==1.7.4            base                 MIT License
+langchain-protocol==0.0.21           base                 MIT License
+langgraph==1.2.20           base                 MIT
+langgraph-checkpoint==4.3.1            base                 MIT
+langgraph-checkpoint-sqlite==3.1.3            base                 MIT
+langgraph-prebuilt==1.1.1            base                 MIT
+langgraph-sdk==0.4.14           base                 MIT
+langsmith==0.14.17          base                 MIT License
+lxml==6.1.3            base                 BSD-3-Clause
+magika==1.0.3            base                 Apache Software License
+mammoth==1.13.0           base                 BSD License
+markdown-it-py==4.2.0            base                 MIT License
+markdownify==1.2.3            base                 MIT License
+markitdown==0.1.9            base                 MIT
+mcp==1.30.0           base                 MIT License
+mdurl==0.1.2            base                 MIT License
+more-itertools==11.2.1           base                 MIT
+numpy==2.5.4            base                 BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0
+nvidia-ml-py==13.615.71        base                 BSD License
+onnxruntime==1.31.1           base                 MIT License
+openai==3.46.0           base                 Apache-2.0
+orjson==3.13.0           base                 MPL-2.0 AND (Apache-2.0 OR MIT)                                          FLAG: weak copyleft
+ormsgpack==1.13.0           base                 Apache-2.0 OR MIT
+packaging==26.3             base                 Apache-2.0 OR BSD-2-Clause
+pdfminer-six==20260107         base                 MIT
+pdfplumber==0.11.10          base                 MIT License
+pillow==13.0.0           base                 MIT-CMU
+platformdirs==4.14.5           base                 MIT
+portalocker==4.4.2            base                 BSD-3-Clause
+prompt-toolkit==3.0.53           base                 BSD License
+protobuf==7.36.2           base                 3-Clause BSD License
+psutil==7.2.2            base                 BSD-3-Clause
+pycparser==3.12             base                 BSD-3-Clause
+pydantic==2.14.3           base                 MIT
+pydantic-core==2.50.4           base                 MIT
+pydantic-settings==2.16.2           base                 MIT
+pygments==2.21.0           base                 BSD-2-Clause
+pyjwt==2.15.1           base                 MIT
+pypdf==7.0.0            base                 BSD-3-Clause
+pypdfium2==5.15.1           base                 BSD-3-Clause, Apache-2.0, dependency licenses
+python-dotenv==1.2.4            base                 BSD-3-Clause
+python-multipart==0.0.33           base                 Apache-2.0
+pywin32==312              base                 Python Software Foundation License
+pywin32-ctypes==0.2.3            base                 BSD-3-Clause
+pyyaml==6.0.3            base                 MIT License
+questionary==2.1.1            base                 MIT License
+referencing==0.37.0           base                 MIT
+regex==2026.11.7        base                 Apache-2.0 AND CNRI-Python
+requests==2.34.2           base                 Apache Software License
+requests-toolbelt==1.0.0            base                 Apache Software License
+rich==15.0.0           base                 MIT License
+rpds-py==2026.9.1         base                 MIT
+secretstorage==3.5.0            base                 BSD-3-Clause
+shellingham==1.5.4            base                 ISC License (ISCL)
+six==1.17.0           base                 MIT License
+sniffio==1.3.1            base                 Apache Software License; MIT License
+soupsieve==4.0.1            base                 MIT
+sqlite-vec==0.1.9            base                 MIT License, Apache License, Version 2.0
+sse-starlette==3.7.0            base                 BSD-3-Clause
+starlette==1.10.0           base                 BSD-3-Clause
+structlog==26.1.0           base                 MIT OR Apache-2.0
+tenacity==9.1.4            base                 Apache Software License
+tiktoken==0.14.0           base                 MIT License
+tomlkit==0.15.2           base                 MIT
+tree-sitter==0.26.0           base                 MIT License
+tree-sitter-language-pack==1.25.0           base                 MIT
+truststore==0.10.5           base                 MIT
+typer==0.27.3           base                 MIT
+typing-extensions==4.16.0           base                 PSF-2.0
+typing-inspection==0.4.5            base                 MIT
+urllib3==2.8.0            base                 MIT
+uuid-utils==0.19.0           base                 BSD-3-Clause
+uvicorn==0.54.0           base                 BSD-3-Clause
+wcwidth==0.9.4            base                 MIT License
+websockets==17.4             base                 BSD-3-Clause
+xxhash==4.0.2            base                 BSD-2-Clause
+zstandard==0.25.0           base                 BSD-3-Clause
+ast-serialize==0.13.1           dev                  MIT
+coverage==7.17.2           dev                  Apache-2.0
+hypothesis==6.170.15         dev                  MPL-2.0                                                                  FLAG: weak copyleft
+iniconfig==2.3.1            dev                  MIT
+librt==0.16.0           dev                  MIT
+mypy==2.4.1            dev                  MIT
+mypy-extensions==1.2.0            dev                  MIT
+pathspec==1.1.1            dev                  Mozilla Public License 2.0 (MPL 2.0)                                     FLAG: weak copyleft
+pytest==9.2.0            dev                  MIT
+pytest-timeout==2.4.0            dev                  DFSG approved; MIT License
+ruff==0.17.4           dev                  MIT
+sortedcontainers==2.4.0            dev                  Apache Software License
+types-psutil==7.2.2.20260906   dev                  Apache-2.0
+anthropic==2.6.0            extra:anthropic      Apache Software License
+docstring-parser==0.18.0           extra:anthropic      MIT License
+langchain-anthropic==1.7.10           extra:anthropic      MIT License
+opentelemetry-api==1.45.2           extra:anthropic      Apache-2.0
+accelerate==1.15.0           extra:docs-advanced  Apache Software License
+colorlog==6.12.0           extra:docs-advanced  MIT License
+cuda-bindings==13.5.0           extra:docs-advanced  Apache-2.0
+cuda-pathfinder==1.8.6            extra:docs-advanced  Apache-2.0
+cuda-toolkit==13.2.2           extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+dill==0.4.1            extra:docs-advanced  BSD License
+doclang==0.9.0            extra:docs-advanced  Apache-2.0
+docling==2.148.0          extra:docs-advanced  MIT
+docling-core==2.106.0          extra:docs-advanced  MIT
+docling-ibm-models==4.0.4            extra:docs-advanced  MIT
+docling-parse==7.24.2           extra:docs-advanced  MIT
+docling-slim==2.148.0          extra:docs-advanced  MIT
+et-xmlfile==2.0.0            extra:docs-advanced  MIT License
+faker==40.44.0          extra:docs-advanced  MIT License
+filelock==4.2.9            extra:docs-advanced  MIT
+fsspec==2026.9.0         extra:docs-advanced  BSD-3-Clause
+hf-xet==1.8.0            extra:docs-advanced  Apache-2.0
+huggingface-hub==1.33.0           extra:docs-advanced  Apache Software License
+jinja2==3.1.6            extra:docs-advanced  BSD License
+jsonref==1.1.0            extra:docs-advanced  MIT
+langcodes==3.5.1            extra:docs-advanced  MIT License
+latex2mathml==3.81.1           extra:docs-advanced  MIT
+mail-parser==4.10.0           extra:docs-advanced  Apache-2.0
+marko==2.2.5            extra:docs-advanced  MIT
+markupsafe==3.0.4            extra:docs-advanced  BSD-3-Clause
+mpire==2.10.2           extra:docs-advanced  MIT License
+mpmath==1.3.0            extra:docs-advanced  BSD License
+multiprocess==0.70.19          extra:docs-advanced  BSD License
+networkx==3.7              extra:docs-advanced  BSD-3-Clause
+nvidia-cublas==13.4.1.3         extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+nvidia-cuda-cccl==13.3.5.0.6       extra:docs-advanced  LicenseRef-NVIDIA-Proprietary                                            REVIEW: proprietary
+nvidia-cuda-cupti==13.2.86          extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+nvidia-cuda-nvrtc==13.2.86          extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+nvidia-cuda-runtime==13.2.86          extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+nvidia-cudnn-cu13==9.26.0.51        extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+nvidia-cufft==12.2.0.57        extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+nvidia-cufile==1.17.1.22        extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+nvidia-cusolver==12.2.0.11        extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+nvidia-cusparse==12.7.10.12       extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+nvidia-cusparselt-cu13==0.8.1            extra:docs-advanced  NVIDIA Proprietary Software                                              REVIEW: proprietary
+nvidia-nccl-cu13==2.30.7           extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+nvidia-nvjitlink==13.5.37          extra:docs-advanced  LicenseRef-NVIDIA-Proprietary                                            REVIEW: proprietary
+nvidia-nvshmem-cu13==3.7.2            extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+nvidia-nvtx==13.2.86          extra:docs-advanced  UNKNOWN                                                                  REVIEW: not declared on PyPI
+olefile==0.47             extra:docs-advanced  BSD License
+omegaconf==2.4.0            extra:docs-advanced  BSD License
+opencv-python-headless==5.0.0.93         extra:docs-advanced  Apache Software License
+openpyxl==3.1.5            extra:docs-advanced  MIT License
+pandas==3.1.1            extra:docs-advanced  BSD-3-Clause
+pluggy==1.7.0            extra:docs-advanced  MIT License
+polyfactory==3.5.0            extra:docs-advanced  MIT License
+pyclipper==1.4.0            extra:docs-advanced  OSI Approved; MIT License
+pylatexenc==2.11             extra:docs-advanced  MIT License
+python-dateutil==4.0.0            extra:docs-advanced  BSD-3-Clause
+python-docx==1.2.0            extra:docs-advanced  MIT License
+python-oxmsg==0.0.2            extra:docs-advanced  MIT License
+python-pptx==1.0.2            extra:docs-advanced  MIT License
+rapidocr==3.10.0           extra:docs-advanced  Apache-2.0
+rtree==1.4.1            extra:docs-advanced  MIT
+safetensors==0.8.0            extra:docs-advanced  Apache Software License
+scipy==1.18.1           extra:docs-advanced  BSD License
+semchunk==3.2.5            extra:docs-advanced  MIT License
+setuptools==84.2.1           extra:docs-advanced  MIT
+shapely==2.2.0            extra:docs-advanced  BSD-3-Clause
+sympy==1.14.0           extra:docs-advanced  BSD License
+tabulate==0.10.0           extra:docs-advanced  MIT
+tokenizers==0.23.3           extra:docs-advanced  Apache Software License
+torch==2.15.0           extra:docs-advanced  Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD
+torchvision==0.29.2           extra:docs-advanced  BSD
+tqdm==4.70.1           extra:docs-advanced  MPL-2.0 AND MIT                                                          FLAG: weak copyleft
+transformers==5.22.2           extra:docs-advanced  Apache 2.0 License
+tree-sitter-c==0.24.2           extra:docs-advanced  MIT License
+tree-sitter-javascript==0.25.0           extra:docs-advanced  MIT
+tree-sitter-python==0.25.0           extra:docs-advanced  MIT
+tree-sitter-typescript==0.23.2           extra:docs-advanced  MIT License
+triton==3.9.0            extra:docs-advanced  MIT
+tzdata==2026.6           extra:docs-advanced  Apache-2.0
+xlsxwriter==3.3.1            extra:docs-advanced  BSD-2-Clause
+filetype==1.2.0            extra:gemini         MIT License
+google-auth==2.62.1           extra:gemini         Apache Software License
+google-genai==3.0.0            extra:gemini         Apache-2.0
+langchain-google-genai==4.4.3            extra:gemini         MIT
+pyasn1==0.6.5            extra:gemini         BSD-2-Clause
+pyasn1-modules==0.4.2            extra:gemini         BSD License

@@ -1,0 +1,60 @@
+AI Software Factory - Source-Available Research Licence
+Version 1.0, 2026
+
+Copyright (c) 2026 [YOUR NAME] <[YOUR EMAIL]>. All rights reserved.
+
+IMPORTANT: THIS IS NOT AN OPEN-SOURCE LICENCE. It is not approved by the Open
+Source Initiative and does not meet the Open Source Definition. This text is a
+draft and must be reviewed by a qualified lawyer before the software is published.
+
+1. Definitions
+   "Software" means the source code, documentation, diagrams and other files in
+   this repository. "Owner" means the copyright holder named above. "You" means
+   any person or entity exercising rights under this licence.
+
+2. Permitted use
+   Subject to the conditions below, the Owner grants You a non-exclusive,
+   non-transferable, revocable, royalty-free licence to:
+   (a) read and study the Software;
+   (b) modify the Software and run it, in original or modified form, solely for
+       academic or personal research and for non-commercial evaluation.
+
+3. Uses that require prior written permission
+   Any use not expressly permitted in section 2 requires the Owner's prior
+   written permission, including without limitation:
+   (a) commercial use of any kind, including use to provide a paid service;
+   (b) production use;
+   (c) internal business use by any company or organisation, whether or not
+       for profit;
+   (d) redistribution, publication, sublicensing or hosting of the Software or
+       of modified versions, in source or binary form.
+
+4. Conditions
+   (a) Keep this licence, the copyright notice and the NOTICE file intact in
+       every copy or modified version You hold.
+   (b) Clearly mark modified files as changed.
+   (c) Third-party components listed in NOTICE remain under their own licences;
+       this licence does not change their terms.
+
+5. Contributions
+   Unless agreed otherwise in writing, contributions You submit to the Owner
+   are licensed to the Owner under these same terms plus the right for the
+   Owner to relicense them.
+
+6. Termination
+   Your rights end automatically if You breach this licence. Sections 4(c), 7
+   and 8 survive termination.
+
+7. No warranty
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+   NON-INFRINGEMENT.
+
+8. Limitation of liability
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE OWNER IS NOT LIABLE FOR ANY
+   CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE.
+
+9. Permission requests
+   Requests for permission under section 3: [YOUR EMAIL].
+
+(No governing-law clause is included. This must be decided during legal review.)

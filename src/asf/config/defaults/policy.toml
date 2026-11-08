@@ -1,0 +1,31 @@
+# FILE: src/asf/config/defaults/policy.toml
+# ROLE: Default tool permission policy per role, path scope rules and approval rules.
+# ARCH REF: D-16; D-21; D-22; IF-14
+# OWNS: Role allow-lists and approval rules
+# DOES NOT OWN: Enforcement (m5_shared/tools/policy.py)
+# CONNECTS TO (external boundaries only):
+#   - imports from none: none
+#   - emits/consumes: none
+# INSTRUCTIONS (strict, imperative):
+#   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
+#   2. Keep every public name and signature declared below exactly as written; they are the contract other files rely on.
+#   3. Use only the standard library, the pinned dependencies in pyproject.toml, and the files listed under CONNECTS TO. Ask before adding a dependency.
+#   4. Open text files with encoding="utf-8" explicitly.
+# FORBIDDEN: shell=True; os.system; hardcoded absolute paths; container runtimes; importing project modules not listed under CONNECTS TO; printing secrets or API keys
+# ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
+# DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for this file.
+
+[roles.T1]
+tools = []
+[roles.T2]
+tools = ["read_file", "write_file", "search_code", "run_tests", "run_linter"]
+[roles.T3]
+tools = ["read_file", "search_code", "load_skill"]
+[roles.reviewer]
+tools = ["read_file", "search_code"]
+
+[approval]
+destructive = "ask"
+network = "deny"
+dependency_install = "ask"
+code_exec_default = false

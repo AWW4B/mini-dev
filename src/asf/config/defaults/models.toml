@@ -1,0 +1,64 @@
+# FILE: src/asf/config/defaults/models.toml
+# ROLE: Default model profiles (local-only, hybrid, api-heavy) and the suggested local model list; nothing is hardcoded in code.
+# ARCH REF: p11; D-07; D-08; D-09; D-10
+# OWNS: Profiles, role routes, strategies, suggested models
+# DOES NOT OWN: API keys (D-38)
+# CONNECTS TO (external boundaries only):
+#   - imports from none: none
+#   - emits/consumes: none
+# INSTRUCTIONS (strict, imperative):
+#   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
+#   2. Keep every public name and signature declared below exactly as written; they are the contract other files rely on.
+#   3. Use only the standard library, the pinned dependencies in pyproject.toml, and the files listed under CONNECTS TO. Ask before adding a dependency.
+#   4. Open text files with encoding="utf-8" explicitly.
+#   5. Model names here are suggestions only; `factory models calibrate` and benchmarks decide.
+#   6. System packages for local runtimes: Debian/Ubuntu: build llama.cpp from source or use release binaries (apt: build-essential cmake); Arch: pacman -S llama.cpp (AUR variants for CUDA); Windows: winget install ggml.llamacpp or release zip; Ollama: official installer on each OS.
+# FORBIDDEN: shell=True; os.system; hardcoded absolute paths; container runtimes; importing project modules not listed under CONNECTS TO; printing secrets or API keys
+# ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
+# DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for this file.
+
+active_profile = "hybrid"
+
+[suggested_local_models]
+coder = ["Qwen3-Coder-30B-A3B-Instruct (GGUF Q4_K_M)", "Qwen2.5-Coder-14B-Instruct (GGUF Q4_K_M)"]
+tiny = ["Qwen3-1.7B (GGUF Q4_K_M, CPU ok)"]
+
+[runtime]
+backend = "llama-server"     # llama-server | ollama | external
+binary = ""                  # empty: found on PATH by doctor
+models_dir = ""              # empty: <data dir>/models
+base_url = ""                # for ollama / external
+
+[profiles.local-only.roles]
+T1 = { provider = "local", model = "" }
+T2 = { provider = "local", model = "" }
+T3 = { provider = "local", model = "" }
+reviewer = { provider = "local", model = "" }
+
+[profiles.hybrid.roles]
+T1 = { provider = "local", model = "" }
+T2 = { provider = "local", model = "" }
+T3 = { provider = "openai", model = "", fallbacks = ["groq"] }
+reviewer = { provider = "openai", model = "" }
+
+[profiles.api-heavy.roles]
+T1 = { provider = "groq", model = "" }
+T2 = { provider = "openai", model = "" }
+T3 = { provider = "anthropic", model = "", fallbacks = ["openai"] }
+reviewer = { provider = "gemini", model = "" }
+
+[strategies]
+planner = "plan_then_verify"   # single_pass | self_critique | plan_then_verify
+worker = "tool_loop"           # tool_loop | whole_file_edit | diff_edit | code_exec
+self_critique_rounds = 2
+
+[providers.openai]
+base_url = "https://api.openai.com/v1"
+[providers.groq]
+base_url = "https://api.groq.com/openai/v1"
+[providers.xai]
+base_url = "https://api.x.ai/v1"
+[providers.gemini]
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+[providers.anthropic]
+extra = "anthropic"

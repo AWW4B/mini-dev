@@ -1,0 +1,43 @@
+# FILE: .github/workflows/ci.yml
+# ROLE: CI on GitHub-hosted Windows and Ubuntu runners for Python 3.12-3.14 (no containers); Arch is covered by scripts/smoke.py.
+# ARCH REF: D-35; FR-3; FR-4
+# OWNS: CI matrix and steps
+# DOES NOT OWN: Arch testing (manual)
+# CONNECTS TO (external boundaries only):
+#   - imports from scripts/check_headers.py: main (header validation)
+#   - imports from scripts/scan_forbidden.py: main (forbidden scan)
+#   - emits/consumes: none
+# INSTRUCTIONS (strict, imperative):
+#   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
+#   2. Keep every public name and signature declared below exactly as written; they are the contract other files rely on.
+#   3. Use only the standard library, the pinned dependencies in pyproject.toml, and the files listed under CONNECTS TO. Ask before adding a dependency.
+#   4. Open text files with encoding="utf-8" explicitly.
+#   5. Steps call Python scripts and uv only, so the same commands work on both runners.
+#   6. Add mypy to the required steps once stubs are implemented (stubs fail strict mypy only on missing bodies, not types).
+# FORBIDDEN: shell=True; os.system; hardcoded absolute paths; container runtimes; importing project modules not listed under CONNECTS TO; printing secrets or API keys; container jobs or service containers; shell-specific syntax
+# ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
+# DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for this file.
+
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12", "3.13", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked --extra web
+      - run: uv run python scripts/check_headers.py --coverage
+      - run: uv run python scripts/scan_forbidden.py
+      - run: uv run ruff check src tests scripts
+      - run: uv run python -m compileall -q src tests scripts
+      - run: uv run pytest -m "not needs_gpu and not needs_sandbox and not needs_network"
