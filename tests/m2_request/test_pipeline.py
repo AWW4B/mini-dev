@@ -17,10 +17,48 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m2_request/test_pipeline.py` on Windows and Linux once src/asf/m2_request/pipeline.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m2_request/test_pipeline.py` and `uv run mypy tests/m2_request/test_pipeline.py` are clean.
 
+from pathlib import Path
+from typing import Any
 
-from asf.m2_request.pipeline import build_request_graph  # noqa: F401
+from langgraph.checkpoint.memory import MemorySaver
+
+from asf.m2_request.pipeline import build_request_graph
 
 
-def test_build_request_graph_meets_contract() -> None:
+def test_build_request_graph_meets_contract(tmp_path: Path) -> None:
     """Prove build_request_graph behaves as declared in src/asf/m2_request/pipeline.py."""
-    raise NotImplementedError("write this test before implementing build_request_graph")
+    graph = build_request_graph()
+    assert graph is not None
+
+    # Create dummy attachment document
+    doc_path = tmp_path / "spec.txt"
+    doc_path.write_text("System requirements:\n- Must log in securely", encoding="utf-8")
+
+    # Create dummy repo
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    (repo_dir / "pyproject.toml").write_text("[project]\nname = 'test-pkg'", encoding="utf-8")
+
+    state_input: dict[str, Any] = {
+        "request_id": "req-pipe-01",
+        "project_id": "proj-alpha",
+        "prompt": "Fix authentication token expiration bug",
+        "attachment_refs": [str(doc_path)],
+        "repo_ref": str(repo_dir),
+    }
+
+    result = graph.invoke(state_input)
+    assert isinstance(result, dict)
+    assert "structured_request" in result
+    structured = result["structured_request"]
+    assert structured.request_id == "req-pipe-01"
+    assert structured.task_type.value == "debug"
+    assert len(structured.requirements) >= 1
+    assert len(result.get("document_refs", [])) >= 1
+    assert result.get("repo_profile") is not None
+
+
+def test_build_request_graph_with_checkpointer() -> None:
+    saver = MemorySaver()
+    graph = build_request_graph(checkpointer=saver)
+    assert graph is not None
