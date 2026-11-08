@@ -18,13 +18,62 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/platform/test_sandbox_bwrap.py` on Windows and Linux once src/asf/platform/sandbox_bwrap.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/platform/test_sandbox_bwrap.py` and `uv run mypy tests/platform/test_sandbox_bwrap.py` are clean.
 
+from pathlib import Path
+
 import pytest
 
-from asf.platform.sandbox_bwrap import BubblewrapSandbox  # noqa: F401
+from asf.platform.sandbox_bwrap import BubblewrapSandbox
+
+
+def test_bubblewrap_sandbox_attributes() -> None:
+    sandbox = BubblewrapSandbox()
+    assert sandbox.name == "bubblewrap"
+    assert sandbox.tier == "A"
+    assert isinstance(sandbox.available(), bool)
+
+
+def test_bubblewrap_build_argv(tmp_path: Path) -> None:
+    sandbox = BubblewrapSandbox()
+
+    class DummySpec:
+        argv = ["echo", "hi"]
+        cwd = tmp_path
+        writable_paths: list[Path] = [tmp_path / "write"]
+        readable_paths: list[Path] = [tmp_path / "read"]
+        network = False
+        timeout_s = 10
+        env: dict[str, str] = {}
+        extra_fds: list[int] = []
+
+    argv = sandbox.build_argv(DummySpec())  # type: ignore[arg-type]
+    assert "--die-with-parent" in argv
+    assert "--unshare-all" in argv
+    assert "--chdir" in argv
+    assert str(tmp_path) in argv
+    assert "--ro-bind" in argv
+    assert "--bind" in argv
+    assert "echo" in argv
+    assert "hi" in argv
 
 
 @pytest.mark.linux_only
 @pytest.mark.needs_sandbox
-def test_bubblewrap_sandbox_meets_contract() -> None:
+def test_bubblewrap_sandbox_meets_contract(tmp_path: Path) -> None:
     """Prove BubblewrapSandbox behaves as declared in src/asf/platform/sandbox_bwrap.py."""
-    raise NotImplementedError("write this test before implementing BubblewrapSandbox")
+    sandbox = BubblewrapSandbox()
+    if not sandbox.available():
+        pytest.skip("bwrap not available on PATH")
+
+    class DummySpec:
+        argv = ["echo", "bwrap_ok"]
+        cwd = tmp_path
+        writable_paths: list[Path] = [tmp_path]
+        readable_paths: list[Path] = [tmp_path]
+        network = False
+        timeout_s = 10
+        env: dict[str, str] = {}
+        extra_fds: list[int] = []
+
+    res = sandbox.run(DummySpec())  # type: ignore[arg-type]
+    assert res.exit_code == 0
+    assert b"bwrap_ok" in res.stdout

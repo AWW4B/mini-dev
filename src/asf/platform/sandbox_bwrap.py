@@ -22,6 +22,10 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/platform/test_sandbox_bwrap.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/platform/sandbox_bwrap.py` and `uv run mypy src/asf/platform/sandbox_bwrap.py` are clean.
 
+import shutil
+import subprocess
+import time
+
 from asf.platform.base import ProcessResult, SandboxSpec
 
 
@@ -30,10 +34,63 @@ class BubblewrapSandbox:
     tier = "A"
 
     def available(self) -> bool:
-        raise NotImplementedError
+        return shutil.which("bwrap") is not None
 
     def build_argv(self, spec: SandboxSpec) -> list[str]:
-        raise NotImplementedError
+        bwrap_bin = shutil.which("bwrap") or "bwrap"
+        cmd = [bwrap_bin]
+
+        if not spec.network:
+            cmd.append("--unshare-all")
+        else:
+            cmd.extend(["--unshare-user", "--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup", "--share-net"])
+
+        cmd.append("--die-with-parent")
+
+        for path in spec.readable_paths:
+            path_str = str(path)
+            cmd.extend(["--ro-bind", path_str, path_str])
+
+        for path in spec.writable_paths:
+            path_str = str(path)
+            cmd.extend(["--bind", path_str, path_str])
+
+        cmd.extend(["--chdir", str(spec.cwd)])
+        cmd.append("--")
+        cmd.extend(spec.argv)
+        return cmd
 
     def run(self, spec: SandboxSpec) -> ProcessResult:
-        raise NotImplementedError
+        if not self.available():
+            raise RuntimeError("bwrap is not installed or not on PATH")
+
+        argv = self.build_argv(spec)
+        start_time = time.monotonic()
+        env = spec.env if spec.env else None
+
+        try:
+            completed = subprocess.run(  # noqa: S603
+                argv,
+                cwd=spec.cwd,
+                timeout=spec.timeout_s,
+                env=env,
+                capture_output=True,
+                check=False,
+            )
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            return ProcessResult(
+                exit_code=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                timed_out=False,
+                duration_ms=duration_ms,
+            )
+        except subprocess.TimeoutExpired as exc:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            return ProcessResult(
+                exit_code=-1,
+                stdout=exc.stdout or b"",
+                stderr=exc.stderr or b"",
+                timed_out=True,
+                duration_ms=duration_ms,
+            )
