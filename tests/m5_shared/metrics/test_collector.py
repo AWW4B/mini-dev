@@ -17,10 +17,139 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/metrics/test_collector.py` on Windows and Linux once src/asf/m5_shared/metrics/collector.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/metrics/test_collector.py` and `uv run mypy tests/m5_shared/metrics/test_collector.py` are clean.
 
+import sqlite3
+from pathlib import Path
+from types import SimpleNamespace
 
-from asf.m5_shared.metrics.collector import MetricsCollector  # noqa: F401
+from asf.m5_shared.metrics.collector import MetricsCollector
 
 
-def test_metrics_collector_meets_contract() -> None:
+def _create_metrics_tables(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS runs (
+            run_id TEXT PRIMARY KEY,
+            cost REAL NOT NULL DEFAULT 0.0,
+            cost_estimated INTEGER NOT NULL DEFAULT 0
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS call_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            task_id TEXT,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cost REAL NOT NULL DEFAULT 0.0,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            timestamp TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tool_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            task_id TEXT,
+            tool_name TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            success INTEGER NOT NULL DEFAULT 1,
+            timestamp TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS limit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '{}',
+            timestamp TEXT NOT NULL
+        );
+        """
+    )
+    conn.commit()
+
+
+def test_metrics_collector_meets_contract(tmp_path: Path) -> None:
     """Prove MetricsCollector behaves as declared in src/asf/m5_shared/metrics/collector.py."""
-    raise NotImplementedError("write this test before implementing MetricsCollector")
+    db_file = tmp_path / "metrics.db"
+    conn = sqlite3.connect(str(db_file))
+    conn.row_factory = sqlite3.Row
+    _create_metrics_tables(conn)
+    conn.execute("INSERT INTO runs (run_id, cost, cost_estimated) VALUES ('run-1', 0.0, 0)")
+    conn.commit()
+
+    store = SimpleNamespace(conn=conn)
+    collector = MetricsCollector(store=store)  # type: ignore[arg-type]
+
+    # 1. Record call
+    call = SimpleNamespace(
+        run_id="run-1",
+        task_id="task-1",
+        role="worker",
+        provider="anthropic",
+        model="claude-3-5-sonnet",
+        strategy="tool_loop",
+        tokens_in=1000,
+        tokens_out=200,
+        latency_ms=150,
+        cost=0.05,
+        source=SimpleNamespace(value="MEASURED"),
+        retry_no=0,
+    )
+    collector.record_call(call)  # type: ignore[arg-type]
+
+    # Verify run updated
+    run_row = conn.execute("SELECT cost, cost_estimated FROM runs WHERE run_id = 'run-1'").fetchone()
+    assert run_row["cost"] == 0.05
+    assert run_row["cost_estimated"] == 0
+
+    # 2. Record tool
+    tool = SimpleNamespace(
+        run_id="run-1",
+        task_id="task-1",
+        tool="compiler",
+        strategy="tool_loop",
+        duration_ms=45,
+        exit_status="0",
+        approval="auto",
+        sandbox_tier="A",
+    )
+    collector.record_tool(tool)  # type: ignore[arg-type]
+
+    # 3. Record limit
+    limit = SimpleNamespace(
+        run_id="run-1",
+        kind="rate_limit",
+        detail="Rate limit reached on tier T1",
+    )
+    collector.record_limit(limit)  # type: ignore[arg-type]
+
+    # 4. Snapshot
+    snap = collector.snapshot("run-1")
+    assert snap.run_id == "run-1"
+    assert snap.values["cost"] == 0.05
+    assert snap.values["input_tokens"] == 1000.0
+    assert snap.values["output_tokens"] == 200.0
+    assert snap.values["calls"] == 1.0
+    assert snap.values["tools"] == 1.0
+    assert snap.values["limits"] == 1.0
+
+    # 5. Export CSV
+    export_dir = tmp_path / "csv_export"
+    files = collector.export_csv("run-1", export_dir)
+    assert len(files) == 3
+    for f in files:
+        p = Path(f)
+        assert p.is_file()
+        content = p.read_text(encoding="utf-8")
+        assert "run-1" in content
+
+    conn.close()
