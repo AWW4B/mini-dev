@@ -18,10 +18,44 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/state_store/test_backup.py` on Windows and Linux once src/asf/m5_shared/state_store/backup.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/state_store/test_backup.py` and `uv run mypy tests/m5_shared/state_store/test_backup.py` are clean.
 
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any
 
-from asf.m5_shared.state_store.backup import backup_databases  # noqa: F401
+from asf.m5_shared.state_store.backup import backup_databases
 
 
-def test_backup_databases_meets_contract() -> None:
+def test_backup_databases_meets_contract(tmp_path: Path, fake_paths: Any) -> None:
     """Prove backup_databases behaves as declared in src/asf/m5_shared/state_store/backup.py."""
-    raise NotImplementedError("write this test before implementing backup_databases")
+    _ = fake_paths
+
+    db_path = tmp_path / "state.db"
+    conn = sqlite3.connect(str(db_path))
+    with conn:
+        conn.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, name TEXT);")
+        conn.execute("INSERT INTO sample (id, name) VALUES (1, 'initial');")
+    conn.close()
+
+    backup_dir = tmp_path / "backups"
+
+    # 1. First backup
+    written = backup_databases([db_path], dest_dir=backup_dir, keep_last=2)
+    assert len(written) == 1
+    assert written[0].is_file()
+
+    # Verify backup database contents
+    b_conn = sqlite3.connect(str(written[0]))
+    row = b_conn.execute("SELECT id, name FROM sample").fetchone()
+    b_conn.close()
+    assert row[0] == 1
+    assert row[1] == "initial"
+
+    # 2. Make additional backups to verify pruning retention (keep_last=2)
+    time.sleep(0.01)
+    backup_databases([db_path], dest_dir=backup_dir, keep_last=2)
+    time.sleep(0.01)
+    backup_databases([db_path], dest_dir=backup_dir, keep_last=2)
+
+    remaining_backups = list(backup_dir.glob("state_*.db"))
+    assert len(remaining_backups) == 2
