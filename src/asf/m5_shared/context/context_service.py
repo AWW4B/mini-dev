@@ -26,12 +26,102 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/context/test_context_service.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/context/context_service.py` and `uv run mypy src/asf/m5_shared/context/context_service.py` are clean.
 
-from asf.contracts.context import ContextPack, ContextRequest
+import hashlib
+import uuid
+
+from asf.contracts.context import ContextItem, ContextPack, ContextRequest, ContextTier
+from asf.contracts.errors import ContextOverflow
+from asf.m5_shared.context.memory import ProjectMemory
+from asf.m5_shared.context.repo_index import RepoIndex
+from asf.m5_shared.gateway.tokenizers import count_tokens
+from asf.m5_shared.registry.registry import ContractRegistry
+
+_MUST_HAVE_TIERS = frozenset({
+    ContextTier.P0_SPEC,
+    ContextTier.P1_CAPSULES,
+    ContextTier.P2_ALLOWED_FILES,
+})
 
 
 class ContextService:
-    def build(self, request: ContextRequest) -> ContextPack:
-        raise NotImplementedError
+    contract_registry: ContractRegistry | None
+    repo_index: RepoIndex | None
+    memory: ProjectMemory | None
+    _candidates: list[ContextItem]
+
+    def __init__(
+        self,
+        contract_registry: ContractRegistry | None = None,
+        repo_index: RepoIndex | None = None,
+        memory: ProjectMemory | None = None,
+    ) -> None:
+        self.contract_registry = contract_registry
+        self.repo_index = repo_index
+        self.memory = memory
+        self._candidates = []
+
+    def add_item(self, item: ContextItem) -> None:
+        self._candidates.append(item)
+
+    def _prepare_item(self, item: ContextItem, model_id: str) -> ContextItem:
+        tokens = item.tokens
+        if tokens <= 0:
+            tokens, _ = count_tokens(model_id, item.text)
+        sha = item.sha256
+        if not sha:
+            sha = hashlib.sha256(item.text.encode("utf-8")).hexdigest()
+        return ContextItem(
+            tier=item.tier,
+            source_ref=item.source_ref,
+            sha256=sha,
+            tokens=tokens,
+            text=item.text,
+        )
+
+    def _gather_must_haves_and_optionals(self, model_id: str) -> tuple[list[ContextItem], list[ContextItem]]:
+        must_haves: list[ContextItem] = []
+        optionals: list[ContextItem] = []
+
+        # Sort all candidates by tier priority (0..5)
+        sorted_candidates = sorted(self._candidates, key=lambda it: int(it.tier))
+        for c in sorted_candidates:
+            prepared = self._prepare_item(c, model_id)
+            if prepared.tier in _MUST_HAVE_TIERS:
+                must_haves.append(prepared)
+            else:
+                optionals.append(prepared)
+
+        return must_haves, optionals
 
     def dry_run_fits(self, request: ContextRequest) -> bool:
-        raise NotImplementedError
+        must_haves, _ = self._gather_must_haves_and_optionals(request.model_id)
+        must_have_tokens = sum(it.tokens for it in must_haves)
+        return must_have_tokens <= request.budget_tokens
+
+    def build(self, request: ContextRequest) -> ContextPack:
+        must_haves, optionals = self._gather_must_haves_and_optionals(request.model_id)
+        must_have_tokens = sum(it.tokens for it in must_haves)
+
+        if must_have_tokens > request.budget_tokens:
+            item_sizes = ", ".join(f"{it.source_ref}: {it.tokens} tokens" for it in must_haves)
+            raise ContextOverflow(
+                f"Must-have context (P0+P1+P2) requires {must_have_tokens} tokens, exceeding budget of {request.budget_tokens}. Items: [{item_sizes}]"
+            )
+
+        included: list[ContextItem] = list(must_haves)
+        total_tokens = must_have_tokens
+
+        # Fill remaining budget with optional tiers (P3, P4, P5)
+        for opt in optionals:
+            if total_tokens + opt.tokens <= request.budget_tokens:
+                included.append(opt)
+                total_tokens += opt.tokens
+
+        return ContextPack(
+            pack_id=str(uuid.uuid4()),
+            task_id=request.task_id,
+            role=request.role,
+            budget_tokens=request.budget_tokens,
+            token_count=total_tokens,
+            items=included,
+        )
