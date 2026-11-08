@@ -150,34 +150,17 @@ For each unit:
   - `src/asf/m5_shared/runtime/local_runtime.py` (LocalRuntime: slot leases, heartbeat, expiry, residency)
   - `src/asf/m5_shared/runtime/calibration.py` (Calibration: tokens/s, VRAM by context, ModelProfile production)
 
-- **Batch 5 (M5 Shared: Tools, CodeExec, Context, State Store Recovery & Backup)**:
-  - `src/asf/m5_shared/tools/registry.py` (ToolRegistry: single source of truth for tool specs and callables)
-  - `src/asf/m5_shared/tools/policy.py` (PolicyEngine: verdict evaluation, human approval triggers, read-only guards)
-  - `src/asf/m5_shared/tools/executor.py` (ToolExecutor: LangChain tools wrapper, policy gating, event emission, metrics collection)
-  - `src/asf/m5_shared/tools/builtin_tools.py` (Builtin tools: read_file, write_file, search_code, run_tests, run_linter)
-  - `src/asf/m5_shared/tools/skills.py` (SkillsRegistry: indexes Agent Skills folders, YAML frontmatter, size warnings)
-  - `src/asf/m5_shared/tools/mcp_client.py` (McpManager: connects to MCP servers via MultiServerMCPClient, default-deny)
-  - `src/asf/m5_shared/tools/codeexec/channel.py` (FramedChannel: 4-byte big-endian length + JSON object, per-run random tag)
-  - `src/asf/m5_shared/tools/codeexec/facade_gen.py` (generate_facade: generates typed Python facade module for sandbox scripts)
-  - `src/asf/m5_shared/tools/codeexec/search.py` (search_tools: searchable view of tools by role and query)
-  - `src/asf/m5_shared/tools/codeexec/runner.py` (execute_code: runs script in Tier A sandbox with framed tool execution)
-  - `src/asf/m5_shared/context/repo_index.py` (RepoIndex: static code index, AST symbols, test<->source map, text search)
-  - `src/asf/m5_shared/context/memory.py` (ProjectMemory: decision log with tag lookup and hash-based invalidation)
-  - `src/asf/m5_shared/context/compaction.py` (compact_history: compacts conversation history via T1 model)
-  - `src/asf/m5_shared/context/context_service.py` (ContextService: builds ContextPack under token budget, ContextOverflow on must-haves)
-  - `src/asf/m5_shared/state_store/recovery.py` (reconcile_on_startup: lease expiry, worktree reset, slot cleanup, decision re-arming)
-  - `src/asf/m5_shared/state_store/backup.py` (backup_databases: consistent online backup via sqlite3.backup with retention pruning)
+- **Batch 6 (M2 Request)**:
+  - `src/asf/m2_request/document_ingestion.py` (MarkItDown extraction, BlobStore storage, media detection, quality scoring)
+  - `src/asf/m2_request/prompt_normalisation.py` (Deterministic Unicode/newline cleaning + optional T1 model cleanup)
+  - `src/asf/m2_request/repository_intake.py` (Repo profiling, language detection, build/test probing, RepoIndex generation)
+  - `src/asf/m2_request/request_understanding.py` (StructuredRequest extraction, TaskType classification, requirement anchoring)
+  - `src/asf/m2_request/intake_router.py` (SubmitRequest intake, SHA-256 idempotency key, provenance tagging, outbox emission)
+  - `src/asf/m2_request/pipeline.py` (M2 LangGraph StateGraph: branches -> barrier -> normalise -> understand)
 
 ---
 
 ### Remaining Batches
-
-#### Batch 6: M2 Request
-1. `src/asf/m2_request/document_ingestion.py`
-2. `src/asf/m2_request/repository_intake.py`
-3. `src/asf/m2_request/request_understanding.py`
-4. `src/asf/m2_request/intake_router.py`
-5. `src/asf/m2_request/pipeline.py`
 
 #### Batch 7: M4 Execution
 1. `src/asf/m4_execution/integration/repair.py`
