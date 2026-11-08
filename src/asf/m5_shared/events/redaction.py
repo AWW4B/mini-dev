@@ -21,12 +21,59 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/events/test_redaction.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/events/redaction.py` and `uv run mypy src/asf/m5_shared/events/redaction.py` are clean.
 
+import re
 from typing import Any
+
+_PRIVATE_KEY_PATTERN = re.compile(r"-----BEGIN [A-Z0-9_\- ]+PRIVATE KEY-----[\s\S]+?-----END [A-Z0-9_\- ]+PRIVATE KEY-----")
+_BEARER_PATTERN = re.compile(r"\bBearer\s+[a-zA-Z0-9_\-\.]{16,}", re.IGNORECASE)
+
+_API_KEY_PATTERNS = [
+    re.compile(r"\bsk-(?:ant-api03-|proj-)?[a-zA-Z0-9_\-]{20,}\b"),
+    re.compile(r"\bgsk_[a-zA-Z0-9_\-]{20,}\b"),
+    re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"),
+]
+
+_ASSIGNMENT_PATTERN = re.compile(r"(?i)\b(api[_-]?key|secret|token|password|auth[_-]?token)\s*[:=]\s*([\"']?)([a-zA-Z0-9_\-\.]{8,})\2")
+
+_SECRET_KEY_NAMES = frozenset({"key", "token", "secret", "password", "auth", "credential", "api_key", "secret_token", "access_token"})
 
 
 def redact_text(text: str) -> str:
-    raise NotImplementedError
+    """Redact secret shapes from text (idempotent, never raises)."""
+    if not isinstance(text, str):
+        return text
+
+    try:
+        result = _PRIVATE_KEY_PATTERN.sub("[REDACTED PRIVATE KEY]", text)
+        result = _BEARER_PATTERN.sub("Bearer [REDACTED]", result)
+        for pat in _API_KEY_PATTERNS:
+            result = pat.sub("[REDACTED]", result)
+        result = _ASSIGNMENT_PATTERN.sub(r"\1=\2[REDACTED]\2", result)
+        return result
+    except Exception:  # noqa: BLE001
+        return text
+
+
+def _redact_value(val: Any, key_name: str = "") -> Any:
+    key_lower = key_name.lower().replace("-", "_")
+    if any(s in key_lower for s in _SECRET_KEY_NAMES):
+        return "[REDACTED]"
+
+    if isinstance(val, str):
+        return redact_text(val)
+    if isinstance(val, dict):
+        return {k: _redact_value(v, k) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_redact_value(item, key_name) for item in val]
+    return val
 
 
 def redact_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError
+    """Redact secrets and token-shaped strings from dictionary payload."""
+    if not isinstance(payload, dict):
+        return payload
+
+    try:
+        return {k: _redact_value(v, k) for k, v in payload.items()}
+    except Exception:  # noqa: BLE001
+        return payload

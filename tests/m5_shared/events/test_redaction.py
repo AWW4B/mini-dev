@@ -18,13 +18,59 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/events/test_redaction.py` on Windows and Linux once src/asf/m5_shared/events/redaction.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/events/test_redaction.py` and `uv run mypy tests/m5_shared/events/test_redaction.py` are clean.
 
 
-from asf.m5_shared.events.redaction import redact_payload, redact_text  # noqa: F401
+from asf.m5_shared.events.redaction import redact_payload, redact_text
 
 
 def test_redact_text_meets_contract() -> None:
     """Prove redact_text behaves as declared in src/asf/m5_shared/events/redaction.py."""
-    raise NotImplementedError("write this test before implementing redact_text")
+    # API key shapes
+    openai_key = "sk-1234567890abcdef1234567890abcdef"
+    text_with_key = f"Connecting using key={openai_key} now"
+    redacted = redact_text(text_with_key)
+    assert openai_key not in redacted
+    assert "[REDACTED]" in redacted
+
+    # Anthropic key shape
+    anthropic_key = "sk-ant-api03-1234567890abcdef1234567890"
+    redacted_ant = redact_text(f"Key: {anthropic_key}")
+    assert anthropic_key not in redacted_ant
+    assert "[REDACTED]" in redacted_ant
+
+    # Bearer token
+    bearer = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abcdef1234567890"
+    redacted_bearer = redact_text(f"Authorization: {bearer}")
+    assert "eyJhbGciOi" not in redacted_bearer
+
+    # Private key block
+    pkey = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0...\n-----END RSA PRIVATE KEY-----"
+    redacted_pkey = redact_text(f"Certificate: {pkey}")
+    assert "MIIEowIBAAK" not in redacted_pkey
+    assert "[REDACTED" in redacted_pkey
+
+    # Idempotent
+    assert redact_text(redacted) == redacted
+    assert redact_text("regular safe text") == "regular safe text"
+
 
 def test_redact_payload_meets_contract() -> None:
     """Prove redact_payload behaves as declared in src/asf/m5_shared/events/redaction.py."""
-    raise NotImplementedError("write this test before implementing redact_payload")
+    payload = {
+        "user": "alice",
+        "api_key": "raw_secret_value_12345",
+        "nested": {
+            "SECRET_TOKEN": "top_secret_token",
+            "message": "Used sk-abcdef123456789012345678 to authenticate",
+            "items": ["safe", "another_password: super_secret_12345"],
+        },
+    }
+    redacted = redact_payload(payload)
+    assert redacted["user"] == "alice"
+    assert redacted["api_key"] == "[REDACTED]"
+    assert redacted["nested"]["SECRET_TOKEN"] == "[REDACTED]"  # noqa: S105
+    assert "sk-abcdef" not in redacted["nested"]["message"]
+
+    # Original payload not mutated
+    assert payload["api_key"] == "raw_secret_value_12345"
+
+    # Idempotent
+    assert redact_payload(redacted) == redacted
