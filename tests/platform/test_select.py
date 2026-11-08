@@ -19,9 +19,29 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/platform/test_select.py` on Windows and Linux once src/asf/platform/select.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/platform/test_select.py` and `uv run mypy tests/platform/test_select.py` are clean.
 
 
-from asf.platform.select import get_platform  # noqa: F401
+import sys
+
+import pytest
+
+from asf.platform.select import get_platform
 
 
 def test_get_platform_meets_contract() -> None:
     """Prove get_platform behaves as declared in src/asf/platform/select.py."""
-    raise NotImplementedError("write this test before implementing get_platform")
+    p1 = get_platform()
+    p2 = get_platform()
+    assert p1 is p2
+    assert p1.name in ("windows", "linux", "fallback")
+    if sys.platform == "win32":
+        assert p1.name == "windows"
+    elif sys.platform.startswith("linux"):
+        assert p1.name == "linux"
+
+
+def test_get_platform_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prove get_platform falls back to FallbackPlatform on other OSes."""
+    get_platform.cache_clear()
+    monkeypatch.setattr(sys, "platform", "darwin")
+    p = get_platform()
+    assert p.name == "fallback"
+    get_platform.cache_clear()

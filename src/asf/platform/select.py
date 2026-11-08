@@ -34,8 +34,19 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/platform/test_select.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/platform/select.py` and `uv run mypy src/asf/platform/select.py` are clean.
 
-from asf.platform.base import PlatformAdapter
+import functools
+import sys
+
+from asf.platform.base import PlatformAdapter, ProcessResult, SandboxBackend, SandboxSpec  # noqa: F401
+from asf.platform.fallback import FallbackPlatform
+from asf.platform.linux import LinuxPlatform
+from asf.platform.windows import WindowsPlatform
 
 
+@functools.cache
 def get_platform() -> PlatformAdapter:
-    raise NotImplementedError
+    if sys.platform == "win32":
+        return WindowsPlatform()
+    if sys.platform.startswith("linux"):
+        return LinuxPlatform()
+    return FallbackPlatform()
