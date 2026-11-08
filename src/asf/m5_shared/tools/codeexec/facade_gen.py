@@ -19,7 +19,102 @@
 
 from asf.contracts.tools import ToolSpec
 
+_TYPE_MAP = {
+    "string": "str",
+    "integer": "int",
+    "number": "float",
+    "boolean": "bool",
+    "array": "list[Any]",
+    "object": "dict[str, Any]",
+}
+
+
+def _map_type(prop_info: dict[str, str]) -> str:
+    raw_type = prop_info.get("type", "any")
+    return _TYPE_MAP.get(raw_type, "Any")
+
 
 def generate_facade(specs: list[ToolSpec]) -> str:
     """Return Python source for module 'tools' with one typed function per spec."""
-    raise NotImplementedError
+    lines: list[str] = [
+        '"""Generated typed tools facade for code execution sandbox."""',
+        "import os",
+        "import sys",
+        "import json",
+        "import uuid",
+        "from typing import Any",
+        "",
+        '_TAG = os.environ.get("ASF_EXEC_TAG", "")',
+        '_FD_IN = int(os.environ.get("ASF_EXEC_FD_IN", "3"))',
+        '_FD_OUT = int(os.environ.get("ASF_EXEC_FD_OUT", "4"))',
+        "",
+        "_channel = None",
+        "",
+        "def _get_channel() -> Any:",
+        "    global _channel",
+        "    if _channel is None:",
+        "        try:",
+        '            r = os.fdopen(_FD_IN, "rb", buffering=0)',
+        '            w = os.fdopen(_FD_OUT, "wb", buffering=0)',
+        "            from asf.m5_shared.tools.codeexec.channel import FramedChannel",
+        "            _channel = FramedChannel(r, w, _TAG)",
+        "        except Exception:",
+        "            _channel = None",
+        "    return _channel",
+        "",
+        "def _call_tool(tool_name: str, args: dict[str, Any]) -> Any:",
+        '    dispatcher = globals().get("_mock_dispatcher")',
+        "    if dispatcher is not None and callable(dispatcher):",
+        "        return dispatcher(tool_name, args)",
+        "",
+        "    ch = _get_channel()",
+        "    if ch is None:",
+        '        raise RuntimeError("Code execution channel not available")',
+        "",
+        "    call_id = str(uuid.uuid4())",
+        '    ch.send("tool_request", call_id, {"tool": tool_name, "args": args})',
+        "    resp = ch.receive(timeout_s=120.0)",
+        "    if resp is None:",
+        '        raise RuntimeError(f"Tool \'{tool_name}\' call timed out or failed to receive response")',
+        '    if resp.get("error"):',
+        '        raise RuntimeError(str(resp["error"]))',
+        '    return resp.get("result", resp.get("body", {}).get("result"))',
+        "",
+    ]
+
+    for spec in specs:
+        fn_name = spec.name.replace("-", "_").replace(".", "_")
+        properties = spec.args_schema.get("properties", {})
+        required = set(spec.args_schema.get("required", []))
+
+        params: list[str] = []
+        for prop_name, prop_data in properties.items():
+            if not isinstance(prop_data, dict):
+                prop_data = {}
+            t_str = _map_type(prop_data)
+            if prop_name in required:
+                params.append(f"{prop_name}: {t_str}")
+            else:
+                params.append(f"{prop_name}: {t_str} | None = None")
+
+        params.append("**kwargs: Any")
+        param_signature = ", ".join(params)
+
+        doc = spec.description.replace('"""', "'''") if spec.description else ""
+
+        lines.append(f"def {fn_name}({param_signature}) -> Any:")
+        lines.append(f'    """{doc}"""')
+        arg_keys = [f'"{p}": {p}' for p in properties]
+        if arg_keys:
+            joined_keys = ", ".join(arg_keys)
+            lines.append(f"    _args: dict[str, Any] = {{{joined_keys}}}")
+            lines.append(
+                "    _cleaned = {k: v for k, v in _args.items() if v is not None}"
+            )
+            lines.append("    _cleaned.update(kwargs)")
+            lines.append(f'    return _call_tool("{spec.name}", _cleaned)')
+        else:
+            lines.append(f'    return _call_tool("{spec.name}", kwargs)')
+        lines.append("")
+
+    return "\n".join(lines)

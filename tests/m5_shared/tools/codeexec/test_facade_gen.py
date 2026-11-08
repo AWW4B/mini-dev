@@ -17,10 +17,67 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/tools/codeexec/test_facade_gen.py` on Windows and Linux once src/asf/m5_shared/tools/codeexec/facade_gen.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/tools/codeexec/test_facade_gen.py` and `uv run mypy tests/m5_shared/tools/codeexec/test_facade_gen.py` are clean.
 
+from types import SimpleNamespace
+from typing import Any
 
-from asf.m5_shared.tools.codeexec.facade_gen import generate_facade  # noqa: F401
+from asf.m5_shared.tools.codeexec.facade_gen import generate_facade
 
 
 def test_generate_facade_meets_contract() -> None:
     """Prove generate_facade behaves as declared in src/asf/m5_shared/tools/codeexec/facade_gen.py."""
-    raise NotImplementedError("write this test before implementing generate_facade")
+    specs: list[Any] = [
+        SimpleNamespace(
+            name="read_file",
+            description="Read the contents of a file.",
+            args_schema={
+                "properties": {
+                    "path": {"type": "string", "description": "Target path"},
+                    "offset": {"type": "integer", "description": "Byte offset"},
+                },
+                "required": ["path"],
+            },
+            roles=["T3"],
+            source="builtin",
+        ),
+        SimpleNamespace(
+            name="search_code",
+            description="Search for symbols.",
+            args_schema={
+                "properties": {
+                    "query": {"type": "string"},
+                },
+                "required": ["query"],
+            },
+            roles=["T3"],
+            source="builtin",
+        ),
+    ]
+
+    source = generate_facade(specs)
+    assert isinstance(source, str)
+    assert "def read_file" in source
+    assert "def search_code" in source
+
+    # Compile source
+    code_obj = compile(source, "tools.py", "exec")
+    assert code_obj is not None
+
+    # Execute in a namespace
+    ns: dict[str, Any] = {}
+    exec(code_obj, ns)  # noqa: S102
+
+    assert callable(ns.get("read_file"))
+    assert callable(ns.get("search_code"))
+
+    # Test invoking through mock dispatcher
+    called_calls: list[tuple[str, dict[str, Any]]] = []
+
+    def mock_dispatcher(name: str, args: dict[str, Any]) -> str:
+        called_calls.append((name, args))
+        return f"result_for_{name}"
+
+    ns["_mock_dispatcher"] = mock_dispatcher
+    res = ns["read_file"](path="src/main.py", offset=10)
+    assert res == "result_for_read_file"
+    assert len(called_calls) == 1
+    assert called_calls[0] == ("read_file", {"path": "src/main.py", "offset": 10})
