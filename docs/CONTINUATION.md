@@ -136,23 +136,23 @@ For each unit:
   - `src/asf/m5_shared/metrics/collector.py` (Call/tool metrics recording and CSV export)
   - `src/asf/m5_shared/metrics/advisories.py` (ResourceAdvisory threshold evaluator)
 
+- **Batch 4 (M5 Shared: Registry, Workspace, Gateway, Runtime)**:
+  - `src/asf/m5_shared/registry/compatibility.py` (Contract compatibility classifier: NO_CHANGE, NON_BREAKING, BREAKING)
+  - `src/asf/m5_shared/registry/capsules.py` (Markdown capsule renderer for schemas, types, errors)
+  - `src/asf/m5_shared/registry/registry.py` (ContractRegistry: contract registration, versioning, verification)
+  - `src/asf/m5_shared/workspace/workspace.py` (WorkspaceManager: git worktrees, blob commits, snapshots)
+  - `src/asf/m5_shared/gateway/tokenizers.py` (Token counting: tiktoken and flagged fallback estimates)
+  - `src/asf/m5_shared/gateway/providers.py` (LangChain chat model construction: OpenAI, Groq, xAI, Gemini, Anthropic, local)
+  - `src/asf/m5_shared/gateway/usage_callback.py` (LangChain callback recording call metrics, token counts, costs)
+  - `src/asf/m5_shared/gateway/gateway.py` (ModelGateway: role-to-route resolution, fallbacks, retries, structured output)
+  - `src/asf/m5_shared/runtime/probes.py` (ResourceProbe: RAM and NVML GPU/VRAM readings)
+  - `src/asf/m5_shared/runtime/backends.py` (LocalRuntimeBackend adapters: llama-server, Ollama, External)
+  - `src/asf/m5_shared/runtime/local_runtime.py` (LocalRuntime: slot leases, heartbeat, expiry, residency)
+  - `src/asf/m5_shared/runtime/calibration.py` (Calibration: tokens/s, VRAM by context, ModelProfile production)
+
 ---
 
 ### Remaining Batches
-
-#### Batch 4: M5 Shared (Registry, Workspace, Gateway, Runtime)
-1. `src/asf/m5_shared/registry/compatibility.py` + `tests/m5_shared/registry/test_compatibility.py`
-2. `src/asf/m5_shared/registry/capsules.py` + `tests/m5_shared/registry/test_capsules.py`
-3. `src/asf/m5_shared/registry/registry.py` + `tests/m5_shared/registry/test_registry.py`
-4. `src/asf/m5_shared/workspace/workspace.py` + `tests/m5_shared/workspace/test_workspace.py`
-5. `src/asf/m5_shared/gateway/tokenizers.py` + `tests/m5_shared/gateway/test_tokenizers.py`
-6. `src/asf/m5_shared/gateway/providers.py` + `tests/m5_shared/gateway/test_providers.py`
-7. `src/asf/m5_shared/gateway/usage_callback.py` + `tests/m5_shared/gateway/test_usage_callback.py`
-8. `src/asf/m5_shared/gateway/gateway.py` + `tests/m5_shared/gateway/test_gateway.py`
-9. `src/asf/m5_shared/runtime/probes.py` + `tests/m5_shared/runtime/test_probes.py`
-10. `src/asf/m5_shared/runtime/backends.py` + `tests/m5_shared/runtime/test_backends.py`
-11. `src/asf/m5_shared/runtime/local_runtime.py` + `tests/m5_shared/runtime/test_local_runtime.py`
-12. `src/asf/m5_shared/runtime/calibration.py` + `tests/m5_shared/runtime/test_calibration.py`
 
 #### Batch 5: M5 Shared (Tools, CodeExec, Context, State Store Recovery)
 1. `src/asf/m5_shared/tools/registry.py`
