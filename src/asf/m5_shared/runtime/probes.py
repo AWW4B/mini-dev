@@ -22,6 +22,8 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/runtime/test_probes.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/runtime/probes.py` and `uv run mypy src/asf/m5_shared/runtime/probes.py` are clean.
 
+import psutil
+import pynvml  # type: ignore[import-untyped]
 from pydantic import BaseModel
 
 
@@ -34,4 +36,34 @@ class ResourceReading(BaseModel):
 
 class ResourceProbe:
     def read(self) -> ResourceReading:
-        raise NotImplementedError
+        ram_free_mb = int(psutil.virtual_memory().available / (1024 * 1024))
+        measured = {"ram": True, "vram": False, "gpu_util": False}
+        vram_free_mb: int | None = None
+        gpu_util_pct: float | None = None
+
+        try:
+            pynvml.nvmlInit()
+            try:
+                device_count = pynvml.nvmlDeviceGetCount()
+                if device_count > 0:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    vram_free_mb = int(mem_info.free / (1024 * 1024))
+                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    gpu_util_pct = float(util.gpu)
+                    measured["vram"] = True
+                    measured["gpu_util"] = True
+            finally:
+                try:
+                    pynvml.nvmlShutdown()
+                except Exception as _shut_err:  # noqa: BLE001
+                    _ = _shut_err
+        except Exception as _err:  # noqa: BLE001
+            _ = _err
+
+        return ResourceReading(
+            ram_free_mb=ram_free_mb,
+            vram_free_mb=vram_free_mb,
+            gpu_util_pct=gpu_util_pct,
+            measured=measured,
+        )
