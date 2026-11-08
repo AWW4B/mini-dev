@@ -18,12 +18,60 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/platform/test_sandbox_jobobject.py` on Windows and Linux once src/asf/platform/sandbox_jobobject.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/platform/test_sandbox_jobobject.py` and `uv run mypy tests/platform/test_sandbox_jobobject.py` are clean.
 
+import sys
+from pathlib import Path
+
 import pytest
 
-from asf.platform.sandbox_jobobject import JobObjectSandbox  # noqa: F401
+from asf.platform.sandbox_jobobject import JobObjectSandbox
+
+
+def test_job_object_sandbox_attributes() -> None:
+    sandbox = JobObjectSandbox()
+    assert sandbox.name == "jobobject"
+    assert sandbox.tier == "B"
 
 
 @pytest.mark.windows_only
-def test_job_object_sandbox_meets_contract() -> None:
+def test_job_object_sandbox_meets_contract(tmp_path: Path) -> None:
     """Prove JobObjectSandbox behaves as declared in src/asf/platform/sandbox_jobobject.py."""
-    raise NotImplementedError("write this test before implementing JobObjectSandbox")
+    sandbox = JobObjectSandbox()
+    assert sandbox.available() is True
+
+    # Run simple process
+    # Pass a spec-like duck or SandboxSpec if imported from base?
+    # Note: test_sandbox_jobobject only imports JobObjectSandbox in CONNECTS TO.
+    # But SandboxSpec is duck-typed or we can create a simple class with fields:
+    class DummySpec:
+        argv = [sys.executable, "-c", "import sys; sys.stdout.write('job_ok'); sys.exit(0)"]
+        cwd = tmp_path
+        writable_paths: list[Path] = []
+        readable_paths: list[Path] = []
+        network = False
+        timeout_s = 10
+        env: dict[str, str] = {}
+        extra_fds: list[int] = []
+
+    res = sandbox.run(DummySpec())  # type: ignore[arg-type]
+    assert res.exit_code == 0
+    assert res.stdout == b"job_ok"
+    assert res.timed_out is False
+    assert res.duration_ms >= 0
+
+
+@pytest.mark.windows_only
+def test_job_object_sandbox_timeout(tmp_path: Path) -> None:
+    sandbox = JobObjectSandbox()
+
+    class SleepSpec:
+        argv = [sys.executable, "-c", "import time; time.sleep(5)"]
+        cwd = tmp_path
+        writable_paths: list[Path] = []
+        readable_paths: list[Path] = []
+        network = False
+        timeout_s = 1
+        env: dict[str, str] = {}
+        extra_fds: list[int] = []
+
+    res = sandbox.run(SleepSpec())  # type: ignore[arg-type]
+    assert res.timed_out is True

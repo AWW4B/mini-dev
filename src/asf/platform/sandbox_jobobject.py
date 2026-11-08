@@ -21,7 +21,28 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/platform/test_sandbox_jobobject.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/platform/sandbox_jobobject.py` and `uv run mypy src/asf/platform/sandbox_jobobject.py` are clean.
 
+import logging
+import subprocess
+import sys
+import time
+from typing import Any
+
 from asf.platform.base import ProcessResult, SandboxSpec
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _get_pywin32() -> tuple[Any, Any, Any] | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        import win32api  # type: ignore[import-untyped]
+        import win32con  # type: ignore[import-untyped]
+        import win32job  # type: ignore[import-untyped]
+
+        return win32job, win32api, win32con
+    except ImportError:
+        return None
 
 
 class JobObjectSandbox:
@@ -29,7 +50,57 @@ class JobObjectSandbox:
     tier = "B"
 
     def available(self) -> bool:
-        raise NotImplementedError
+        return _get_pywin32() is not None
 
     def run(self, spec: SandboxSpec) -> ProcessResult:
-        raise NotImplementedError
+        win32 = _get_pywin32()
+        if not win32:
+            raise RuntimeError("JobObjectSandbox is not available on this platform")
+        win32job, win32api, _ = win32
+
+        job = win32job.CreateJobObject(None, "")
+        info = win32job.QueryInformationJobObject(job, win32job.JobObjectExtendedLimitInformation)
+        info["BasicLimitInformation"]["LimitFlags"] = win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        win32job.SetInformationJobObject(job, win32job.JobObjectExtendedLimitInformation, info)
+
+        start_time = time.monotonic()
+        env = spec.env if spec.env else None
+        proc = subprocess.Popen(  # noqa: S603
+            spec.argv,
+            cwd=spec.cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            win32job.AssignProcessToJobObject(job, proc._handle)  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Failed to assign process to job object: %s", exc)
+
+        try:
+            stdout, stderr = proc.communicate(timeout=spec.timeout_s)
+            timed_out = False
+            exit_code = proc.returncode
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                win32job.TerminateJobObject(job, 1)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("TerminateJobObject failed: %s", exc)
+                proc.kill()
+            stdout, stderr = proc.communicate()
+            exit_code = -1
+        finally:
+            try:
+                win32api.CloseHandle(job)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("CloseHandle failed: %s", exc)
+
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        return ProcessResult(
+            exit_code=exit_code,
+            stdout=stdout or b"",
+            stderr=stderr or b"",
+            timed_out=timed_out,
+            duration_ms=duration_ms,
+        )
