@@ -18,9 +18,15 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/cli/test_app.py` on Windows and Linux once src/asf/cli/app.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/cli/test_app.py` and `uv run mypy tests/cli/test_app.py` are clean.
 
 
-from asf.cli.app import main  # noqa: F401
+from typer.testing import CliRunner
+
+from asf.cli.app import app, main
 
 
 def test_main_meets_contract() -> None:
-    """Prove main behaves as declared in src/asf/cli/app.py."""
-    raise NotImplementedError("write this test before implementing main")
+    """Prove main and app behave as declared in src/asf/cli/app.py."""
+    assert callable(main)
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", "--output", "plain"])
+    assert result.exit_code in (0, 1, 2)
+    assert "python" in result.stdout.lower()

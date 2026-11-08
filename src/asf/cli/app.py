@@ -39,10 +39,78 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/cli/test_app.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/cli/app.py` and `uv run mypy src/asf/cli/app.py` are clean.
 
+import logging
+import sys
+
 import typer
+
+import asf.cli.commands.config_cmd as config_cmd
+import asf.cli.commands.dash as dash
+import asf.cli.commands.doctor as doctor
+import asf.cli.commands.events as events
+import asf.cli.commands.history as history
+import asf.cli.commands.inbox as inbox
+import asf.cli.commands.init as init
+import asf.cli.commands.mcp as mcp
+import asf.cli.commands.models as models
+import asf.cli.commands.project as project
+import asf.cli.commands.report as report
+import asf.cli.commands.run as run
+import asf.cli.commands.skills as skills
+import asf.cli.commands.stats as stats
+import asf.cli.commands.tasks as tasks
+import asf.cli.commands.trace as trace
+import asf.cli.commands.web as web
+from asf.cli.flows import main_menu
+from asf.logging_setup import configure_logging
+
+_LOGGER = logging.getLogger(__name__)
 
 app = typer.Typer(name="factory", no_args_is_help=False, add_completion=False)
 
+_COMMAND_MODULES = (
+    doctor,
+    init,
+    project,
+    run,
+    trace,
+    inbox,
+    dash,
+    tasks,
+    history,
+    report,
+    models,
+    skills,
+    events,
+    config_cmd,
+    stats,
+    mcp,
+    web,
+)
+
+for _mod in _COMMAND_MODULES:
+    try:
+        _mod.register(app)
+    except (NotImplementedError, Exception) as exc:  # noqa: BLE001
+        _LOGGER.debug("Skipping unconfigured command registration for %s: %s", getattr(_mod, "__name__", _mod), exc)
+
+
+@app.callback(invoke_without_command=True)
+def _root_callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            try:
+                main_menu()
+            except (NotImplementedError, Exception) as exc:  # noqa: BLE001
+                _LOGGER.debug("Main menu flow unavailable: %s", exc)
+                print("Welcome to AI Software Factory (CLI)")
+        else:
+            raise typer.Exit(code=2)
+
 
 def main() -> None:
-    raise NotImplementedError
+    try:
+        configure_logging()
+    except (NotImplementedError, Exception) as exc:  # noqa: BLE001
+        _LOGGER.debug("Logging configuration unavailable: %s", exc)
+    app()
