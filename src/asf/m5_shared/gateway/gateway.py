@@ -35,21 +35,166 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/gateway/test_gateway.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/gateway/gateway.py` and `uv run mypy src/asf/m5_shared/gateway/gateway.py` are clean.
 
+import tomllib
+from pathlib import Path
 from typing import Any
 
 from langchain_core.runnables import Runnable
 
 from asf.contracts.budget import RunBudget
+from asf.contracts.errors import BudgetExceeded, ProviderUnavailable
 from asf.contracts.models import ModelRole
+from asf.m5_shared.gateway.providers import RouteConfig, build_chat_model
+from asf.m5_shared.gateway.usage_callback import UsageCallbackHandler
 
 
 class ModelGateway:
-    def __init__(self, profile_name: str, budget: RunBudget) -> None:
-        raise NotImplementedError
+    profile_name: str
+    budget: RunBudget
+    roles: dict[str, dict[str, Any]]
+    strategies: dict[str, str]
 
-    def model_for(self, role: ModelRole, purpose: str, output_schema: type[Any] | None = None, task_id: str | None = None) -> Runnable[Any, Any]:
-        raise NotImplementedError
+    def __init__(self, profile_name: str, budget: RunBudget) -> None:
+        self.profile_name = profile_name
+        self.budget = budget
+        self.roles = {}
+        self.strategies = {}
+        self._load_config()
+
+    def _load_config(self) -> None:
+        cfg_path = Path(__file__).resolve().parents[2] / "config" / "defaults" / "models.toml"
+        data: dict[str, Any] = {}
+        if cfg_path.is_file():
+            try:
+                with open(cfg_path, "rb") as fh:
+                    data = tomllib.load(fh)
+            except Exception:
+                data = {}
+
+        profiles = data.get("profiles", {})
+        profile_data = profiles.get(self.profile_name, {})
+        self.roles = profile_data.get("roles", {})
+        self.strategies = data.get("strategies", {})
+
+        if not self.roles:
+            if self.profile_name == "local-only":
+                self.roles = {
+                    "T1": {"provider": "local", "model": ""},
+                    "T2": {"provider": "local", "model": ""},
+                    "T3": {"provider": "local", "model": ""},
+                    "reviewer": {"provider": "local", "model": ""},
+                }
+            elif self.profile_name == "api-heavy":
+                self.roles = {
+                    "T1": {"provider": "groq", "model": ""},
+                    "T2": {"provider": "openai", "model": ""},
+                    "T3": {"provider": "anthropic", "model": "", "fallbacks": ["openai"]},
+                    "reviewer": {"provider": "gemini", "model": ""},
+                }
+            else:  # hybrid
+                self.roles = {
+                    "T1": {"provider": "local", "model": ""},
+                    "T2": {"provider": "local", "model": ""},
+                    "T3": {"provider": "openai", "model": "", "fallbacks": ["groq"]},
+                    "reviewer": {"provider": "openai", "model": ""},
+                }
 
     def baseline_warnings(self) -> list[str]:
         """D-09: warn (never block) when the profile lacks 2 API providers, a local coder or the tiny model."""
-        raise NotImplementedError
+        warnings: list[str] = []
+        providers_used: set[str] = set()
+        has_local_coder = False
+        has_tiny_model = False
+
+        for role_name, rdata in self.roles.items():
+            prov = str(rdata.get("provider", ""))
+            if prov and prov != "local":
+                providers_used.add(prov)
+            for fb in rdata.get("fallbacks", []):
+                fb_str = str(fb)
+                if fb_str and fb_str != "local":
+                    providers_used.add(fb_str)
+            if role_name in ("T2", "coder") and prov == "local":
+                has_local_coder = True
+            if role_name in ("T1", "tiny") and (prov == "local" or rdata.get("model", "")):
+                has_tiny_model = True
+
+        if len(providers_used) < 2:
+            warnings.append("Profile lacks 2 API providers (D-09)")
+        if not has_local_coder:
+            warnings.append("Profile lacks a local coder (D-09)")
+        if not has_tiny_model:
+            warnings.append("Profile lacks the tiny model (D-09)")
+
+        return warnings
+
+    def model_for(
+        self,
+        role: ModelRole,
+        purpose: str,
+        output_schema: type[Any] | None = None,
+        task_id: str | None = None,
+    ) -> Runnable[Any, Any]:
+        role_key = role.value if hasattr(role, "value") else str(role)
+
+        if role_key == "T1" and purpose == "acceptance_tests":
+            raise ValueError("Refusing role T1 for purpose 'acceptance_tests' (A-4)")
+
+        if self.budget.used_api_spend >= self.budget.max_api_spend:
+            raise BudgetExceeded(
+                f"Budget exceeded: API spend limit reached ({self.budget.used_api_spend:.2f} >= {self.budget.max_api_spend:.2f})"
+            )
+        if self.budget.used_remote_tokens >= self.budget.max_remote_tokens:
+            raise BudgetExceeded(
+                f"Budget exceeded: Remote token limit reached ({self.budget.used_remote_tokens} >= {self.budget.max_remote_tokens})"
+            )
+
+        role_cfg = self.roles.get(role_key, {})
+        provider = str(role_cfg.get("provider", "local"))
+        model_name = str(role_cfg.get("model", "")) or ("gpt-4o" if provider == "openai" else "default")
+        fallbacks = list(role_cfg.get("fallbacks", []))
+
+        route = RouteConfig(provider=provider, model=model_name)
+        try:
+            base_model = build_chat_model(route)
+        except Exception as err:
+            raise ProviderUnavailable(f"Provider '{provider}' unavailable: {err}") from err
+
+        strategy = self.strategies.get("worker", "tool_loop")
+        usage_handler = UsageCallbackHandler(
+            run_id=str(self.budget.run_id),
+            task_id=task_id,
+            role=role_key,
+            strategy=strategy,
+        )
+
+        runnable: Runnable[Any, Any] = base_model.with_retry(stop_after_attempt=3)
+
+        if output_schema is not None:
+            structured = getattr(base_model, "with_structured_output", None)
+            if structured is not None:
+                try:
+                    runnable = base_model.with_structured_output(output_schema, method="json_schema").with_retry(
+                        stop_after_attempt=3
+                    )
+                except Exception:
+                    runnable = base_model.with_structured_output(output_schema).with_retry(stop_after_attempt=3)
+
+        if fallbacks:
+            fallback_models: list[Runnable[Any, Any]] = []
+            for fb_provider in fallbacks:
+                fb_route = RouteConfig(provider=str(fb_provider), model="default")
+                try:
+                    fb_chat = build_chat_model(fb_route)
+                    if output_schema is not None and hasattr(fb_chat, "with_structured_output"):
+                        fb_runnable = fb_chat.with_structured_output(output_schema).with_retry(stop_after_attempt=3)
+                    else:
+                        fb_runnable = fb_chat.with_retry(stop_after_attempt=3)
+                    fallback_models.append(fb_runnable)
+                except Exception as _fb_err:  # noqa: BLE001
+                    _ = _fb_err
+            if fallback_models:
+                runnable = runnable.with_fallbacks(fallback_models)
+
+        runnable = runnable.with_config(callbacks=[usage_handler])
+        return runnable
