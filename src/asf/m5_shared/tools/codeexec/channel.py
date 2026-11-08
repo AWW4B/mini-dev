@@ -18,9 +18,10 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/tools/codeexec/test_channel.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/tools/codeexec/channel.py` and `uv run mypy src/asf/m5_shared/tools/codeexec/channel.py` are clean.
 
-import concurrent.futures
 import io
 import json
+import queue
+import threading
 from typing import Any, BinaryIO
 
 TOOL_REQUEST_KIND: str = "tool_request"
@@ -31,11 +32,31 @@ class FramedChannel:
     reader: BinaryIO
     writer: BinaryIO
     tag: str
+    _queue: queue.Queue[dict[str, Any] | None]
+    _closed: bool
+    _worker: threading.Thread | None
 
     def __init__(self, reader: BinaryIO, writer: BinaryIO, tag: str) -> None:
         self.reader = reader
         self.writer = writer
         self.tag = tag
+        self._closed = False
+        self._queue = queue.Queue()
+        self._worker = None
+
+        if not isinstance(reader, io.BytesIO):
+            self._worker = threading.Thread(target=self._reader_loop, daemon=True)
+            self._worker.start()
+
+    def _reader_loop(self) -> None:
+        while not self._closed:
+            try:
+                frame = self._read_frame()
+                if frame is None:
+                    break
+                self._queue.put(frame)
+            except Exception:  # noqa: BLE001
+                break
 
     def send(self, kind: str, msg_id: str, body: dict[str, Any]) -> None:
         msg: dict[str, Any] = dict(body)
@@ -52,7 +73,10 @@ class FramedChannel:
     def _read_exact(self, count: int) -> bytes:
         buf = bytearray()
         while len(buf) < count:
-            chunk = self.reader.read(count - len(buf))
+            try:
+                chunk = self.reader.read(count - len(buf))
+            except (ValueError, OSError):
+                break
             if not chunk:
                 break
             buf.extend(chunk)
@@ -80,9 +104,18 @@ class FramedChannel:
         if isinstance(self.reader, io.BytesIO):
             return self._read_frame()
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(self._read_frame)
-            try:
-                return future.result(timeout=max(timeout_s, 0.001))
-            except (TimeoutError, concurrent.futures.TimeoutError):
-                return None
+        try:
+            return self._queue.get(timeout=max(timeout_s, 0.001))
+        except queue.Empty:
+            return None
+
+    def close(self) -> None:
+        self._closed = True
+        try:
+            self.reader.close()
+        except Exception as _err:  # noqa: BLE001
+            _ = _err
+        try:
+            self.writer.close()
+        except Exception as _err:  # noqa: BLE001
+            _ = _err
