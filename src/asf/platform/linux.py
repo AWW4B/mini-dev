@@ -27,31 +27,96 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/platform/test_linux.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/platform/linux.py` and `uv run mypy src/asf/platform/linux.py` are clean.
 
+import signal
+import subprocess
+import time
 from pathlib import Path
+from typing import cast
 
-from asf.platform.base import ProcessResult, SandboxBackend
+import portalocker
+import psutil
+
+from asf.contracts.errors import PolicyDenied
+from asf.platform.base import PlatformAdapter, ProcessResult, SandboxBackend, SandboxSpec  # noqa: F401
+from asf.platform.fallback import StaticOnlySandbox
+from asf.platform.sandbox_bwrap import BubblewrapSandbox
+from asf.platform.sandbox_srt import SrtSandbox
 
 
 class LinuxPlatform:
     name = "linux"
 
     def sandbox(self) -> SandboxBackend:
-        raise NotImplementedError
+        bwrap = BubblewrapSandbox()
+        if bwrap.available():
+            return cast(SandboxBackend, bwrap)
+        srt = SrtSandbox()
+        if srt.available():
+            return cast(SandboxBackend, srt)
+        return cast(SandboxBackend, StaticOnlySandbox())
 
     def run_process(self, argv: list[str], cwd: Path, timeout_s: int, env: dict[str, str] | None = None) -> ProcessResult:
-        raise NotImplementedError
+        start_time = time.monotonic()
+        try:
+            completed = subprocess.run(  # noqa: S603
+                argv,
+                cwd=cwd,
+                timeout=timeout_s,
+                env=env,
+                capture_output=True,
+                check=False,
+            )
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            return ProcessResult(
+                exit_code=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                timed_out=False,
+                duration_ms=duration_ms,
+            )
+        except subprocess.TimeoutExpired as exc:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            return ProcessResult(
+                exit_code=-1,
+                stdout=exc.stdout or b"",
+                stderr=exc.stderr or b"",
+                timed_out=True,
+                duration_ms=duration_ms,
+            )
 
     def kill_tree(self, pid: int) -> None:
-        raise NotImplementedError
+        try:
+            proc = psutil.Process(pid)
+            for child in proc.children(recursive=True):
+                try:
+                    child.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            try:
+                proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
 
     def lock_file(self, path: Path, timeout_s: float) -> object:
-        raise NotImplementedError
+        return portalocker.Lock(str(path), timeout=timeout_s)
 
     def resolve_within(self, root: Path, candidate: str) -> Path:
-        raise NotImplementedError
+        root_resolved = root.resolve()
+        target = (root / candidate).resolve()
+        try:
+            target.relative_to(root_resolved)
+        except ValueError as err:
+            raise PolicyDenied(f"Candidate {candidate!r} escapes root {root!r}") from err
+        return target
 
     def install_interrupt_handler(self, on_interrupt: object) -> None:
-        raise NotImplementedError
+        if callable(on_interrupt):
+            def _sig_handler(signum: int, frame: object) -> None:
+                on_interrupt()
+
+            signal.signal(signal.SIGINT, _sig_handler)
 
     def detach(self, argv: list[str], log_path: Path) -> int:
-        raise NotImplementedError
+        raise PolicyDenied("detach is not supported on Linux")
