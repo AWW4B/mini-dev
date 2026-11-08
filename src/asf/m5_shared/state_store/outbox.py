@@ -18,14 +18,47 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/state_store/test_outbox.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/state_store/outbox.py` and `uv run mypy src/asf/m5_shared/state_store/outbox.py` are clean.
 
+import json
+from types import SimpleNamespace
+from typing import Any
+
 from asf.m5_shared.events.event_log import EventLog
 from asf.m5_shared.state_store.store import StateStore
 
 
 class OutboxRelay:
+    store: StateStore
+    log: EventLog
+
     def __init__(self, store: StateStore, log: EventLog) -> None:
-        raise NotImplementedError
+        self.store = store
+        self.log = log
 
     def relay_once(self, max_rows: int = 500) -> int:
         """Relay pending outbox rows; return how many were relayed."""
-        raise NotImplementedError
+        cur = self.store.conn.execute(
+            "SELECT id, payload FROM outbox WHERE published = 0 ORDER BY id ASC LIMIT ?",
+            (max_rows,),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return 0
+
+        events: list[Any] = []
+        row_ids: list[int] = []
+        for row in rows:
+            row_ids.append(int(row["id"]))
+            raw = row["payload"]
+            evt_obj = json.loads(raw, object_hook=lambda d: SimpleNamespace(**d))
+            events.append(evt_obj)
+
+        self.log.append(events)
+
+        with self.store.conn:
+            placeholders = ",".join("?" for _ in row_ids)
+            self.store.conn.execute(
+                f"UPDATE outbox SET published = 1 WHERE id IN ({placeholders})",  # noqa: S608
+                row_ids,
+            )
+
+        return len(rows)

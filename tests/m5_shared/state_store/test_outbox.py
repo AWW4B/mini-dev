@@ -17,10 +17,90 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/state_store/test_outbox.py` on Windows and Linux once src/asf/m5_shared/state_store/outbox.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/state_store/test_outbox.py` and `uv run mypy tests/m5_shared/state_store/test_outbox.py` are clean.
 
+import json
+import sqlite3
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
-from asf.m5_shared.state_store.outbox import OutboxRelay  # noqa: F401
+from asf.m5_shared.state_store.outbox import OutboxRelay
 
 
-def test_outbox_relay_meets_contract() -> None:
+def test_outbox_relay_meets_contract(tmp_path: Path) -> None:
     """Prove OutboxRelay behaves as declared in src/asf/m5_shared/state_store/outbox.py."""
-    raise NotImplementedError("write this test before implementing OutboxRelay")
+    db_file = tmp_path / "test_outbox.db"
+    conn = sqlite3.connect(str(db_file))
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE outbox (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            run_id TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            published INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT
+        );
+        """
+    )
+    conn.commit()
+
+    evt1 = {
+        "event_id": "evt-1",
+        "run_id": "run-1",
+        "seq": 0,
+        "ts": "2026-11-08T12:00:00Z",
+        "actor": {"kind": "agent", "role": "worker", "name": "Worker 1"},
+        "kind": "step_started",
+        "correlation_id": "c1",
+        "payload": {"step": 1},
+        "visibility": "user",
+    }
+    evt2 = {
+        "event_id": "evt-2",
+        "run_id": "run-1",
+        "seq": 0,
+        "ts": "2026-11-08T12:01:00Z",
+        "actor": {"kind": "service", "role": "system", "name": "Supervisor"},
+        "kind": "run_completed",
+        "correlation_id": "c1",
+        "payload": {"status": "ok"},
+        "visibility": "internal",
+    }
+
+    conn.execute(
+        "INSERT INTO outbox (event_id, run_id, payload, published, created_at) VALUES (?, ?, ?, 0, ?)",
+        ("evt-1", "run-1", json.dumps(evt1), "2026-11-08T12:00:00Z"),
+    )
+    conn.execute(
+        "INSERT INTO outbox (event_id, run_id, payload, published, created_at) VALUES (?, ?, ?, 0, ?)",
+        ("evt-2", "run-1", json.dumps(evt2), "2026-11-08T12:01:00Z"),
+    )
+    conn.commit()
+
+    relayed_events: list[Any] = []
+
+    class FakeEventLog:
+        def append(self, events: list[Any]) -> list[int]:
+            relayed_events.extend(events)
+            return list(range(1, len(events) + 1))
+
+    fake_store = SimpleNamespace(conn=conn)
+    fake_log = FakeEventLog()
+
+    relay = OutboxRelay(store=fake_store, log=fake_log)  # type: ignore[arg-type]
+
+    # Relay pending rows
+    count = relay.relay_once(max_rows=10)
+    assert count == 2
+    assert len(relayed_events) == 2
+
+    # Check published status in outbox
+    cur = conn.execute("SELECT published FROM outbox ORDER BY id ASC")
+    statuses = [row["published"] for row in cur.fetchall()]
+    assert statuses == [1, 1]
+
+    # Relay again yields 0 rows
+    assert relay.relay_once(max_rows=10) == 0
+
+    conn.close()
