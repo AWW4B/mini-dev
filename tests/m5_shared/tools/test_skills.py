@@ -19,9 +19,66 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/tools/test_skills.py` on Windows and Linux once src/asf/m5_shared/tools/skills.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/tools/test_skills.py` and `uv run mypy tests/m5_shared/tools/test_skills.py` are clean.
 
 
-from asf.m5_shared.tools.skills import SkillsRegistry  # noqa: F401
+from pathlib import Path
+
+from asf.m5_shared.tools.skills import SkillsRegistry
 
 
-def test_skills_registry_meets_contract() -> None:
+def test_skills_registry_meets_contract(tmp_path: Path) -> None:
     """Prove SkillsRegistry behaves as declared in src/asf/m5_shared/tools/skills.py."""
-    raise NotImplementedError("write this test before implementing SkillsRegistry")
+    # 1. Create a custom skill in tmp_path
+    skill_dir = tmp_path / "sample-skill"
+    skill_dir.mkdir()
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(
+        "---\n"
+        "name: sample-skill\n"
+        "description: A sample test skill for unit testing\n"
+        "version: 1.0.0\n"
+        "allowed-tools: [read_file, search_code]\n"
+        "---\n\n"
+        "# Sample Skill\n\n"
+        "Step 1: Do something.\n",
+        encoding="utf-8",
+    )
+
+    # 2. Create an oversized skill
+    oversized_dir = tmp_path / "oversized-skill"
+    oversized_dir.mkdir()
+    oversized_file = oversized_dir / "SKILL.md"
+    oversized_lines = ["line\n"] * 450
+    oversized_file.write_text(
+        "---\n"
+        "name: oversized-skill\n"
+        "description: An oversized skill\n"
+        "version: 0.1.0\n"
+        "allowed-tools: []\n"
+        "---\n" + "".join(oversized_lines),
+        encoding="utf-8",
+    )
+
+    reg = SkillsRegistry(skills_dir=tmp_path)
+
+    # 3. Lookup
+    manifests = reg.lookup("sample", role="T3")
+    assert len(manifests) == 1
+    m = manifests[0]
+    assert m.name == "sample-skill"
+    assert m.version == "1.0.0"
+    assert "read_file" in m.allowed_tools
+    assert m.body_chars > 0
+
+    # 4. Load body
+    body = reg.load_body("sample-skill")
+    assert "Step 1: Do something." in body
+    assert "---" not in body.strip()
+
+    # 5. Validate all
+    warnings = reg.validate_all()
+    assert any("oversized-skill" in w for w in warnings)
+
+    # 6. Built-in skills discoverable when using default skills_dir
+    default_reg = SkillsRegistry()
+    builtin_manifests = default_reg.lookup("structuring", role="T3")
+    assert len(builtin_manifests) >= 1
+    assert any(bm.name == "request-structuring" for bm in builtin_manifests)
