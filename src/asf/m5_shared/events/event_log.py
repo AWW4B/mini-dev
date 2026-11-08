@@ -27,18 +27,152 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/events/test_event_log.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/events/event_log.py` and `uv run mypy src/asf/m5_shared/events/event_log.py` are clean.
 
+import json
+import sqlite3
 from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
 from asf.contracts.events import EventEnvelope, Visibility
+from asf.m5_shared.events.redaction import redact_payload
+from asf.m5_shared.workspace.blobs import BlobStore
 
 
 class EventLog:
+    conn: sqlite3.Connection
+    blobs: BlobStore | None
+
+    def __init__(self, conn: sqlite3.Connection | Path | str, blobs: BlobStore | None = None) -> None:
+        if isinstance(conn, (Path, str)):
+            self.conn = sqlite3.connect(str(conn), autocommit=False)
+        else:
+            self.conn = conn
+        self.conn.row_factory = sqlite3.Row
+        self.blobs = blobs
+
     def append(self, events: Sequence[EventEnvelope]) -> list[int]:
         """Store events (idempotent on event_id); return assigned seq numbers."""
-        raise NotImplementedError
+        assigned_seqs: list[int] = []
 
-    def read(self, run_id: str, after_seq: int = 0, limit: int = 500, visibility: Visibility | None = None) -> list[EventEnvelope]:
-        raise NotImplementedError
+        with self.conn:
+            for event in events:
+                event_id = str(event.event_id)
+                run_id = str(event.run_id)
+
+                # Check if already present (idempotent)
+                cur = self.conn.execute("SELECT seq FROM events WHERE event_id = ?", (event_id,))
+                row = cur.fetchone()
+                if row is not None:
+                    assigned_seqs.append(int(row["seq"]))
+                    continue
+
+                # Monotonic sequence per run
+                cur = self.conn.execute(
+                    "SELECT coalesce(max(seq), 0) FROM events WHERE run_id = ?",
+                    (run_id,),
+                )
+                max_seq_row = cur.fetchone()
+                next_seq = (int(max_seq_row[0]) if max_seq_row else 0) + 1
+
+                # Redact payload
+                clean_payload = redact_payload(event.payload)
+                payload_bytes = json.dumps(clean_payload).encode("utf-8")
+                payload_ref = getattr(event, "payload_ref", None)
+                stored_payload = clean_payload
+
+                # Offload to blobs if payload > 8 KB
+                if len(payload_bytes) > 8192 and self.blobs is not None:
+                    payload_ref = self.blobs.put(payload_bytes)
+                    stored_payload = {}
+
+                if isinstance(event, EventEnvelope):
+                    stored_envelope = event.model_copy(
+                        update={
+                            "seq": next_seq,
+                            "payload": stored_payload,
+                            "payload_ref": payload_ref,
+                            "redacted": True,
+                        }
+                    )
+                else:
+                    actor_data = (
+                        event.actor
+                        if isinstance(event.actor, dict)
+                        else vars(event.actor)
+                        if hasattr(event.actor, "__dict__")
+                        else event.actor
+                    )
+                    stored_envelope = EventEnvelope.model_validate(
+                        {
+                            "event_id": event_id,
+                            "run_id": run_id,
+                            "task_id": getattr(event, "task_id", None),
+                            "seq": next_seq,
+                            "ts": event.ts,
+                            "actor": actor_data,
+                            "kind": event.kind.value if hasattr(event.kind, "value") else str(event.kind),
+                            "causation_id": getattr(event, "causation_id", None),
+                            "correlation_id": getattr(event, "correlation_id", ""),
+                            "payload": stored_payload,
+                            "payload_ref": payload_ref,
+                            "visibility": (
+                                event.visibility.value if hasattr(event.visibility, "value") else str(event.visibility)
+                            ),
+                            "redacted": True,
+                        }
+                    )
+
+                envelope_json = stored_envelope.model_dump_json()
+                kind_val = stored_envelope.kind.value
+                vis_val = stored_envelope.visibility.value
+                ts_str = stored_envelope.ts.isoformat()
+                source = stored_envelope.actor.role
+                task_id = stored_envelope.task_id
+
+                self.conn.execute(
+                    "INSERT INTO events (event_id, run_id, seq, timestamp, kind, visibility, source, "
+                    "task_id, attempt_id, blob_ref, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        event_id,
+                        run_id,
+                        next_seq,
+                        ts_str,
+                        kind_val,
+                        vis_val,
+                        source,
+                        task_id,
+                        None,
+                        payload_ref,
+                        envelope_json,
+                    ),
+                )
+                assigned_seqs.append(next_seq)
+
+        return assigned_seqs
+
+    def read(
+        self,
+        run_id: str,
+        after_seq: int = 0,
+        limit: int = 500,
+        visibility: Visibility | None = None,
+    ) -> list[EventEnvelope]:
+        sql = "SELECT payload FROM events WHERE run_id = ? AND seq > ?"
+        params: list[Any] = [run_id, after_seq]
+        if visibility is not None:
+            vis_val = visibility.value if hasattr(visibility, "value") else str(visibility)
+            sql += " AND visibility = ?"
+            params.append(vis_val)
+        sql += " ORDER BY seq ASC LIMIT ?"
+        params.append(limit)
+
+        cur = self.conn.execute(sql, params)
+        return [EventEnvelope.model_validate_json(row["payload"]) for row in cur.fetchall()]
 
     def latest_seq(self, run_id: str) -> int:
-        raise NotImplementedError
+        cur = self.conn.execute(
+            "SELECT coalesce(max(seq), 0) FROM events WHERE run_id = ?",
+            (run_id,),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
