@@ -19,23 +19,21 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/config/test_secrets.py` on Windows and Linux once src/asf/config/secrets.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/config/test_secrets.py` and `uv run mypy tests/config/test_secrets.py` are clean.
 
 
-import os
-from pathlib import Path
+from typing import Any
 
 import pytest
 
-from asf.config.paths import AppPaths
 from asf.config.secrets import get_api_key, key_sources  # noqa: F401
 
 
-def test_get_api_key_from_env(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_api_key_from_env(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """get_api_key reads from FACTORY_<PROVIDER>_API_KEY env var."""
     monkeypatch.setenv("FACTORY_OPENAI_API_KEY", "sk-test-env-key")
     result = get_api_key("openai")
     assert result == "sk-test-env-key"
 
 
-def test_get_api_key_from_dotenv(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_api_key_from_dotenv(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """get_api_key falls back to .env file in config dir."""
     monkeypatch.delenv("FACTORY_ANTHROPIC_API_KEY", raising=False)
     env_file = fake_paths.config_dir / ".env"
@@ -46,20 +44,20 @@ def test_get_api_key_from_dotenv(fake_paths: AppPaths, monkeypatch: pytest.Monke
     assert result == "ant-test-key"
 
 
-def test_get_api_key_missing(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_api_key_missing(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """get_api_key returns None when no key is configured."""
     monkeypatch.delenv("FACTORY_OPENAI_API_KEY", raising=False)
     result = get_api_key("openai")
     assert result is None
 
 
-def test_get_api_key_meets_contract(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_api_key_meets_contract(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """get_api_key returns str or None, never raises."""
     result = get_api_key("unknown_provider_xyz")
     assert result is None or isinstance(result, str)
 
 
-def test_key_sources_meets_contract(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_key_sources_meets_contract(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """key_sources returns a dict mapping known providers to source names."""
     monkeypatch.delenv("FACTORY_OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("FACTORY_ANTHROPIC_API_KEY", raising=False)
@@ -73,14 +71,14 @@ def test_key_sources_meets_contract(fake_paths: AppPaths, monkeypatch: pytest.Mo
         assert sources[provider] in ("keyring", "env", "dotenv", "missing")
 
 
-def test_key_sources_env_provider(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_key_sources_env_provider(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """key_sources reports 'env' when env var is set."""
     monkeypatch.setenv("FACTORY_OPENAI_API_KEY", "sk-test")
     sources = key_sources()
     assert sources.get("openai") == "env"
 
 
-def test_key_sources_dotenv_provider(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_key_sources_dotenv_provider(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """key_sources reports 'dotenv' when key is in .env file."""
     monkeypatch.delenv("FACTORY_ANTHROPIC_API_KEY", raising=False)
     env_file = fake_paths.config_dir / ".env"
@@ -90,7 +88,7 @@ def test_key_sources_dotenv_provider(fake_paths: AppPaths, monkeypatch: pytest.M
     assert sources.get("anthropic") == "dotenv"
 
 
-def test_key_sources_reports_missing(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_key_sources_reports_missing(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """key_sources reports 'missing' for providers with no key anywhere."""
     monkeypatch.delenv("FACTORY_GOOGLE_API_KEY", raising=False)
     sources = key_sources()

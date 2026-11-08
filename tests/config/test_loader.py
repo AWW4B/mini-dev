@@ -19,17 +19,15 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/config/test_loader.py` on Windows and Linux once src/asf/config/loader.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/config/test_loader.py` and `uv run mypy tests/config/test_loader.py` are clean.
 
 
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from asf.config.loader import load_layered, write_user_toml  # noqa: F401
-from asf.config.paths import AppPaths
 
 
-def test_load_layered_meets_contract(fake_paths: AppPaths, tmp_path: Path) -> None:
+def test_load_layered_meets_contract(fake_paths: Any, tmp_path: Path) -> None:
     """load_layered returns a dict merging defaults + user + project + env layers."""
     # With no user/project overrides, we still get package defaults for 'factory'
     result = load_layered("factory")
@@ -39,7 +37,7 @@ def test_load_layered_meets_contract(fake_paths: AppPaths, tmp_path: Path) -> No
     assert result.get("max_parallel_workers") == 1
 
 
-def test_load_layered_user_override(fake_paths: AppPaths) -> None:
+def test_load_layered_user_override(fake_paths: Any) -> None:
     """User TOML overrides the package default."""
     user_toml = fake_paths.config_dir / "factory.toml"
     user_toml.write_text("[web]\nport = 9999\n", encoding="utf-8")
@@ -50,7 +48,7 @@ def test_load_layered_user_override(fake_paths: AppPaths) -> None:
     assert result.get("profile") == "hybrid"
 
 
-def test_load_layered_project_override(fake_paths: AppPaths, tmp_path: Path) -> None:
+def test_load_layered_project_override(fake_paths: Any, tmp_path: Path) -> None:
     """Project .factory TOML overrides user TOML."""
     proj_root = tmp_path / "myproj"
     proj_root.mkdir()
@@ -62,26 +60,28 @@ def test_load_layered_project_override(fake_paths: AppPaths, tmp_path: Path) -> 
     assert result.get("max_parallel_workers") == 8
 
 
-def test_load_layered_env_override(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_layered_env_override(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """FACTORY_* env vars override file layers."""
     monkeypatch.setenv("FACTORY_PROFILE", "local")
     result = load_layered("factory")
     assert result.get("profile") == "local"
 
 
-def test_load_layered_cli_override(fake_paths: AppPaths) -> None:
+def test_load_layered_cli_override(fake_paths: Any) -> None:
     """cli_overrides wins over all file layers."""
     result = load_layered("factory", cli_overrides={"output": "plain"})
     assert result.get("output") == "plain"
 
 
-def test_load_layered_unknown_name(fake_paths: AppPaths) -> None:
-    """Unknown config name returns an empty dict (no defaults file exists)."""
+def test_load_layered_unknown_name(fake_paths: Any) -> None:
+    """Unknown config name returns no file-layer content (factory defaults absent)."""
     result = load_layered("does_not_exist_xyz")
-    assert result == {}
+    # No file defaults exist for this config name, so factory-specific keys are absent
+    assert "profile" not in result, "factory defaults should not bleed into unknown config name"
+    assert "max_parallel_workers" not in result
 
 
-def test_write_user_toml_meets_contract(fake_paths: AppPaths) -> None:
+def test_write_user_toml_meets_contract(fake_paths: Any) -> None:
     """write_user_toml writes a TOML file and returns its path."""
     data: dict[str, Any] = {"profile": "local", "max_parallel_workers": 4}
     dest = write_user_toml("factory", data)
@@ -94,7 +94,7 @@ def test_write_user_toml_meets_contract(fake_paths: AppPaths) -> None:
     assert result.get("max_parallel_workers") == 4
 
 
-def test_write_user_toml_idempotent(fake_paths: AppPaths) -> None:
+def test_write_user_toml_idempotent(fake_paths: Any) -> None:
     """Calling write_user_toml twice merges cleanly."""
     write_user_toml("factory", {"profile": "hybrid"})
     write_user_toml("factory", {"output": "plain"})

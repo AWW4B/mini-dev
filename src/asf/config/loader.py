@@ -55,13 +55,15 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     result: dict[str, Any] = dict(base)
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)  # type: ignore[arg-type]
+            result[key] = _deep_merge(result[key], value)
         else:
             result[key] = value
     return result
 
 
 _API_KEY_SUFFIXES = ("_api_key", "_token", "_secret")
+# Non-config env vars under the FACTORY_ prefix that should not be injected into config dicts
+_SKIP_ENV_KEYS = frozenset({"HOME", "TEST_NEEDS_GPU", "TEST_NEEDS_SANDBOX", "TEST_NEEDS_NETWORK"})
 
 
 def _env_overrides() -> dict[str, Any]:
@@ -77,8 +79,10 @@ def _env_overrides() -> dict[str, Any]:
             continue
         rest = env_key[len(prefix):]
         rest_lower = rest.lower()
-        # Skip secrets
+        # Skip secrets and infrastructure env vars
         if any(rest_lower.endswith(s) for s in _API_KEY_SUFFIXES):
+            continue
+        if rest in _SKIP_ENV_KEYS:
             continue
         parts = rest_lower.split("_", 1)
         if len(parts) == 2:
@@ -86,7 +90,7 @@ def _env_overrides() -> dict[str, Any]:
             if section not in result:
                 result[section] = {}
             if isinstance(result[section], dict):
-                result[section][key] = env_val  # type: ignore[index]
+                result[section][key] = env_val
         else:
             result[parts[0]] = env_val
     return result
@@ -125,7 +129,7 @@ def load_layered(name: str, project_root: Path | None = None, cli_overrides: dic
             merged = _deep_merge(merged, _read_toml_file(project_toml))
 
     # Layer 4: env overrides
-    merged = _deep_merge(merged, _env_overrides(name))
+    merged = _deep_merge(merged, _env_overrides())
 
     # Layer 5: CLI overrides
     if cli_overrides:
@@ -148,7 +152,7 @@ def write_user_toml(name: str, data: dict[str, Any]) -> Path:
         doc = tomlkit.document()
 
     for key, value in data.items():
-        doc[key] = value  # type: ignore[index]
+        doc[key] = value
 
     with open(dest, "w", encoding="utf-8") as fh:
         tomlkit.dump(doc, fh)

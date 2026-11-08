@@ -20,36 +20,34 @@
 
 
 import logging
-from pathlib import Path
+from typing import Any
 
-from asf.config.paths import AppPaths
 from asf.logging_setup import configure_logging  # noqa: F401
 
 
-def test_configure_logging_meets_contract(fake_paths: AppPaths) -> None:
+def test_configure_logging_meets_contract(fake_paths: Any) -> None:
     """configure_logging runs without error and creates log file in log_dir."""
     configure_logging(level="DEBUG")
-    log_file = fake_paths.log_dir / "factory.log"
     # The log file should be created (or at least handlers attached)
     root = logging.getLogger()
     assert len(root.handlers) > 0, "Expected at least one handler to be attached"
 
 
-def test_configure_logging_default_level(fake_paths: AppPaths) -> None:
+def test_configure_logging_default_level(fake_paths: Any) -> None:
     """configure_logging with defaults sets INFO level."""
     configure_logging()
     root = logging.getLogger()
     assert root.level <= logging.INFO
 
 
-def test_configure_logging_json_console(fake_paths: AppPaths) -> None:
+def test_configure_logging_json_console(fake_paths: Any) -> None:
     """configure_logging with json_console=True does not raise."""
     configure_logging(level="WARNING", json_console=True)
     root = logging.getLogger()
     assert root.level <= logging.WARNING
 
 
-def test_configure_logging_idempotent(fake_paths: AppPaths) -> None:
+def test_configure_logging_idempotent(fake_paths: Any) -> None:
     """Calling configure_logging twice does not raise or leave duplicate handlers."""
     configure_logging()
     configure_logging()

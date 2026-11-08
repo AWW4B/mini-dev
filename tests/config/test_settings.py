@@ -18,11 +18,11 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/config/test_settings.py` on Windows and Linux once src/asf/config/settings.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/config/test_settings.py` and `uv run mypy tests/config/test_settings.py` are clean.
 
 
+from typing import Any
+
 import pytest
 
-from asf.config.paths import AppPaths
 from asf.config.settings import FactorySettings, WebSettings, load_settings  # noqa: F401
-from asf.contracts.errors import ConfigError
 
 
 def test_web_settings_meets_contract() -> None:
@@ -50,26 +50,26 @@ def test_factory_settings_meets_contract() -> None:
     assert fs.web.port == 8765
 
 
-def test_load_settings_meets_contract(fake_paths: AppPaths) -> None:
+def test_load_settings_meets_contract(fake_paths: Any) -> None:
     """load_settings returns a FactorySettings from the layered config."""
     settings = load_settings()
     assert isinstance(settings, FactorySettings)
     assert settings.profile == "hybrid"
 
 
-def test_load_settings_with_overrides(fake_paths: AppPaths) -> None:
+def test_load_settings_with_overrides(fake_paths: Any) -> None:
     """load_settings applies cli overrides."""
     settings = load_settings(overrides={"output": "plain"})
     assert settings.output == "plain"
 
 
-def test_load_settings_web_bind_host_is_fixed(fake_paths: AppPaths) -> None:
+def test_load_settings_web_bind_host_is_fixed(fake_paths: Any) -> None:
     """bind_host cannot be overridden via config; it stays 127.0.0.1."""
     settings = load_settings()
     assert settings.web.bind_host == "127.0.0.1"
 
 
-def test_load_settings_env_prefix(fake_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_settings_env_prefix(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """FACTORY_ prefix env vars affect FactorySettings."""
     monkeypatch.setenv("FACTORY_PROFILE", "local")
     settings = load_settings()

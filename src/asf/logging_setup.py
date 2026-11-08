@@ -30,6 +30,8 @@ import structlog
 
 from asf.config.paths import get_paths
 
+_LOGGER = logging.getLogger(__name__)
+
 
 def _make_redact_processor() -> Any:
     """Return a structlog processor that redacts secrets from log event dicts.
@@ -44,8 +46,8 @@ def _make_redact_processor() -> Any:
             if "event" in event_dict and isinstance(event_dict["event"], str):
                 try:
                     event_dict["event"] = redact_text(event_dict["event"])
-                except (NotImplementedError, Exception):  # noqa: BLE001
-                    pass
+                except (NotImplementedError, Exception) as _err:  # noqa: BLE001
+                    _LOGGER.debug("redact_text failed: %s", _err)
             return event_dict
 
         return _processor

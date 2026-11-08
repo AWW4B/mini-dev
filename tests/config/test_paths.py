@@ -19,8 +19,6 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/config/test_paths.py` on Windows and Linux once src/asf/config/paths.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/config/test_paths.py` and `uv run mypy tests/config/test_paths.py` are clean.
 
 
-import os
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest

@@ -66,7 +66,7 @@ def load_settings(project_root: Path | None = None, overrides: dict[str, object]
 
     # web.bind_host is fixed – remove it from raw so it cannot be overridden
     if isinstance(raw.get("web"), dict):
-        raw["web"].pop("bind_host", None)  # type: ignore[union-attr]
+        raw["web"].pop("bind_host", None)
 
     # Merge CLI overrides on top
     if overrides:
@@ -78,7 +78,7 @@ def load_settings(project_root: Path | None = None, overrides: dict[str, object]
                 if not isinstance(sub, dict):
                     sub = {}
                     node[part] = sub
-                node = sub  # type: ignore[assignment]
+                node = sub
             node[keys[-1]] = val
 
     # Strip env-layer artifacts that are not FactorySettings fields (e.g. FACTORY_HOME)

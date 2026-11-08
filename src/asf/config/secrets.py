@@ -82,8 +82,8 @@ def get_api_key(provider: str) -> str | None:
         kr_val = keyring.get_password(_KEYRING_SERVICE, provider)
         if kr_val:
             return kr_val
-    except Exception:  # noqa: BLE001
-        pass  # keyring unavailable or backend error; fall through
+    except Exception as _kr_err:  # noqa: BLE001
+        _LOGGER.debug("keyring unavailable for %s: %s", provider, _kr_err)
 
     # 2. environment variable
     env_name = _env_key_name(provider)
@@ -116,8 +116,8 @@ def key_sources() -> dict[str, str]:
             if kr_val:
                 result[provider] = "keyring"
                 continue
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as _kr_err:  # noqa: BLE001
+            _LOGGER.debug("keyring check failed for %s: %s", provider, _kr_err)
 
         # env var
         if os.environ.get(env_name):
