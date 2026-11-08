@@ -27,9 +27,9 @@ from asf.m5_shared.tools.policy import PolicyEngine, PolicyVerdict, Verdict
 
 def test_verdict_meets_contract() -> None:
     """Prove Verdict behaves as declared in src/asf/m5_shared/tools/policy.py."""
-    assert Verdict.ALLOW == "allow"
-    assert Verdict.DENY == "deny"
-    assert Verdict.NEEDS_APPROVAL == "needs_approval"
+    assert Verdict.ALLOW.value == "allow"
+    assert Verdict.DENY.value == "deny"
+    assert Verdict.NEEDS_APPROVAL.value == "needs_approval"
 
 
 def test_policy_verdict_meets_contract() -> None:
