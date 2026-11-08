@@ -27,11 +27,22 @@ from asf.contracts.tools import ToolSpec
 
 
 class ToolRegistry:
+    _tools: dict[str, tuple[ToolSpec, Callable[..., Any]]]
+
+    def __init__(self) -> None:
+        self._tools = {}
+
     def register(self, spec: ToolSpec, fn: Callable[..., Any]) -> None:
-        raise NotImplementedError
+        self._tools[spec.name] = (spec, fn)
 
     def get(self, name: str) -> tuple[ToolSpec, Callable[..., Any]]:
-        raise NotImplementedError
+        if name not in self._tools:
+            raise KeyError(f"Tool '{name}' not found in registry")
+        return self._tools[name]
 
     def specs_for(self, role: str) -> list[ToolSpec]:
-        raise NotImplementedError
+        return [
+            spec
+            for spec, _ in self._tools.values()
+            if role in spec.roles or "*" in spec.roles
+        ]

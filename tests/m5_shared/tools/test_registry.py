@@ -18,9 +18,61 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/tools/test_registry.py` on Windows and Linux once src/asf/m5_shared/tools/registry.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/tools/test_registry.py` and `uv run mypy tests/m5_shared/tools/test_registry.py` are clean.
 
 
-from asf.m5_shared.tools.registry import ToolRegistry  # noqa: F401
+from types import SimpleNamespace
+
+import pytest
+
+from asf.m5_shared.tools.registry import ToolRegistry
 
 
 def test_tool_registry_meets_contract() -> None:
     """Prove ToolRegistry behaves as declared in src/asf/m5_shared/tools/registry.py."""
-    raise NotImplementedError("write this test before implementing ToolRegistry")
+    reg = ToolRegistry()
+
+    def dummy_fn(x: int) -> int:
+        return x * 2
+
+    spec1 = SimpleNamespace(
+        name="tool_one",
+        description="A first tool",
+        args_schema={"type": "object", "properties": {"x": {"type": "integer"}}},
+        destructive=False,
+        needs_network=False,
+        roles=["developer", "coder"],
+        source="builtin",
+    )
+
+    spec2 = SimpleNamespace(
+        name="tool_two",
+        description="A second tool",
+        args_schema={"type": "object"},
+        destructive=True,
+        needs_network=True,
+        roles=["admin"],
+        source="builtin",
+    )
+
+    # 1. Register tools
+    reg.register(spec1, dummy_fn)  # type: ignore[arg-type]
+    reg.register(spec2, lambda: "ok")  # type: ignore[arg-type]
+
+    # 2. Get tool
+    ret_spec, ret_fn = reg.get("tool_one")
+    assert ret_spec == spec1
+    assert ret_fn(5) == 10
+
+    # 3. Get nonexistent raises KeyError
+    with pytest.raises(KeyError, match="not found"):
+        reg.get("missing_tool")
+
+    # 4. specs_for role
+    dev_specs = reg.specs_for("developer")
+    assert len(dev_specs) == 1
+    assert dev_specs[0].name == "tool_one"
+
+    admin_specs = reg.specs_for("admin")
+    assert len(admin_specs) == 1
+    assert admin_specs[0].name == "tool_two"
+
+    empty_specs = reg.specs_for("reviewer")
+    assert len(empty_specs) == 0
