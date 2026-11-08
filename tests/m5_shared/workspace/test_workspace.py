@@ -18,10 +18,82 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/workspace/test_workspace.py` on Windows and Linux once src/asf/m5_shared/workspace/workspace.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/workspace/test_workspace.py` and `uv run mypy tests/m5_shared/workspace/test_workspace.py` are clean.
 
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
-from asf.m5_shared.workspace.workspace import Workspace  # noqa: F401
+from asf.m5_shared.workspace.workspace import Workspace
 
 
-def test_workspace_meets_contract() -> None:
+def test_workspace_meets_contract(tmp_path: Path) -> None:
     """Prove Workspace behaves as declared in src/asf/m5_shared/workspace/workspace.py."""
-    raise NotImplementedError("write this test before implementing Workspace")
+    # Initialize a test git repository
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)  # noqa: S603, S607
+    subprocess.run(["git", "config", "user.name", "ASF Test"], cwd=tmp_path, check=True, capture_output=True)  # noqa: S603, S607
+    subprocess.run(["git", "config", "user.email", "test@asf.local"], cwd=tmp_path, check=True, capture_output=True)  # noqa: S603, S607
+
+    init_file = tmp_path / "hello.txt"
+    init_file.write_text("initial commit\n", encoding="utf-8")
+    subprocess.run(["git", "add", "hello.txt"], cwd=tmp_path, check=True, capture_output=True)  # noqa: S603, S607
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)  # noqa: S603, S607
+
+    ws = Workspace(tmp_path)
+
+    # 1. CREATE_WORKTREE
+    op_create = SimpleNamespace(
+        kind=SimpleNamespace(value="create_worktree"),
+        task_id="task-1",
+        branch="feature-1",
+        base_commit="HEAD",
+    )
+    res_create = ws.apply(op_create)  # type: ignore[arg-type]
+    assert res_create.ok is True
+    assert res_create.worktree_path is not None
+    wt_path = Path(res_create.worktree_path)
+    assert wt_path.is_dir()
+
+    # Make a commit in the worktree
+    (wt_path / "feature.txt").write_text("feature content\n", encoding="utf-8")
+    subprocess.run(["git", "add", "feature.txt"], cwd=wt_path, check=True, capture_output=True)  # noqa: S603, S607
+    subprocess.run(["git", "commit", "-m", "add feature"], cwd=wt_path, check=True, capture_output=True)  # noqa: S603, S607
+
+    # 2. DIFF
+    op_diff = SimpleNamespace(
+        kind=SimpleNamespace(value="diff"),
+        task_id="task-1",
+        branch="feature-1",
+        base_commit="HEAD",
+    )
+    res_diff = ws.apply(op_diff)  # type: ignore[arg-type]
+    assert res_diff.ok is True
+    assert res_diff.diff_ref is not None
+    assert res_diff.diff_ref.startswith("sha256:")
+
+    # 3. MERGE
+    op_merge = SimpleNamespace(
+        kind=SimpleNamespace(value="merge"),
+        task_id=None,
+        branch="feature-1",
+        base_commit=None,
+    )
+    res_merge = ws.apply(op_merge)  # type: ignore[arg-type]
+    assert res_merge.ok is True
+    assert res_merge.commit is not None
+
+    # Verify merged file exists in main repo
+    assert (tmp_path / "feature.txt").is_file()
+
+    # 4. TAG
+    op_tag = SimpleNamespace(
+        kind=SimpleNamespace(value="tag"),
+        task_id="task-1",
+        branch="v1.0.0",
+        base_commit=None,
+    )
+    res_tag = ws.apply(op_tag)  # type: ignore[arg-type]
+    assert res_tag.ok is True
+    assert res_tag.commit is not None
+
+    # 5. GC
+    pruned = ws.gc()
+    assert pruned >= 0

@@ -28,17 +28,113 @@
 # ERRORS: Return WorkspaceResult(ok=False, error_kind=...) for conflict/lock/io; raise AsfError only when git is missing.
 # DONE WHEN: (1) tests/m5_shared/workspace/test_workspace.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/workspace/workspace.py` and `uv run mypy src/asf/m5_shared/workspace/workspace.py` are clean.
 
+import shutil
 from pathlib import Path
+from typing import Any
 
 from asf.contracts.workspace import WorkspaceOp, WorkspaceResult
+from asf.m5_shared.workspace.blobs import BlobStore
+from asf.platform.select import get_platform
 
 
 class Workspace:
-    def __init__(self, repo_dir: Path) -> None:
-        raise NotImplementedError
+    repo_dir: Path
+    git_bin: str
+    blobs: BlobStore
+
+    def __init__(self, repo_dir: Path, blobs: BlobStore | None = None) -> None:
+        self.repo_dir = repo_dir
+        git_found = shutil.which("git")
+        if not git_found:
+            raise RuntimeError("git binary not found in PATH")
+        self.git_bin = git_found
+        self.blobs = blobs if blobs is not None else BlobStore(repo_dir / ".asf_blobs")
+
+    def _run_git(self, args: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
+        target_cwd = cwd if cwd is not None else self.repo_dir
+        res = get_platform().run_process([self.git_bin, *args], cwd=target_cwd, timeout_s=60)
+        stdout = res.stdout.decode("utf-8", errors="replace").strip()
+        stderr = res.stderr.decode("utf-8", errors="replace").strip()
+        return res.exit_code, stdout, stderr
+
+    def _apply_unlocked(self, op: WorkspaceOp, kind_val: str) -> WorkspaceResult:
+        if kind_val == "create_worktree":
+            branch = op.branch or (f"task/{op.task_id}" if op.task_id else "task/worktree")
+            wt_dir = self.repo_dir / ".worktrees" / (op.task_id or op.branch or "worktree")
+            wt_dir.parent.mkdir(parents=True, exist_ok=True)
+            base = op.base_commit or "HEAD"
+
+            code, out, err = self._run_git(["worktree", "add", "-b", branch, str(wt_dir), base])
+            if code != 0:
+                code, out, err = self._run_git(["worktree", "add", str(wt_dir), branch])
+            if code != 0:
+                return WorkspaceResult(ok=False, error_kind=f"worktree_failed: {err}")
+
+            code, out, _ = self._run_git(["rev-parse", "HEAD"], cwd=wt_dir)
+            return WorkspaceResult(ok=True, worktree_path=str(wt_dir), commit=out if code == 0 else base)
+
+        if kind_val == "diff":
+            base = op.base_commit or "HEAD"
+            target = op.branch or "HEAD"
+            code, out, err = self._run_git(["diff", base, target])
+            if code != 0:
+                code, out, err = self._run_git(["diff", base])
+            diff_ref = self.blobs.put(out.encode("utf-8"))
+            return WorkspaceResult(ok=True, diff_ref=diff_ref)
+
+        if kind_val == "merge":
+            if not op.branch:
+                return WorkspaceResult(ok=False, error_kind="missing_branch")
+            code, out, err = self._run_git(["merge", "--no-ff", "-m", f"Merge {op.branch}", op.branch])
+            if code != 0:
+                self._run_git(["merge", "--abort"])
+                return WorkspaceResult(ok=False, error_kind="merge_conflict")
+            code, out, _ = self._run_git(["rev-parse", "HEAD"])
+            return WorkspaceResult(ok=True, commit=out if code == 0 else None)
+
+        if kind_val == "revert":
+            code, out, err = self._run_git(["reset", "--hard", "HEAD"])
+            if code != 0:
+                return WorkspaceResult(ok=False, error_kind=f"revert_failed: {err}")
+            code, out, _ = self._run_git(["rev-parse", "HEAD"])
+            return WorkspaceResult(ok=True, commit=out if code == 0 else None)
+
+        if kind_val == "tag":
+            tag_name = op.branch or f"checkpoint-{op.task_id}"
+            code, out, err = self._run_git(["tag", "-f", tag_name])
+            if code != 0:
+                return WorkspaceResult(ok=False, error_kind=f"tag_failed: {err}")
+            code, out, _ = self._run_git(["rev-parse", "HEAD"])
+            return WorkspaceResult(ok=True, commit=out if code == 0 else None)
+
+        if kind_val == "reset_to_base":
+            base = op.base_commit or "HEAD"
+            code, out, err = self._run_git(["reset", "--hard", base])
+            if code != 0:
+                return WorkspaceResult(ok=False, error_kind=f"reset_failed: {err}")
+            return WorkspaceResult(ok=True, commit=base)
+
+        return WorkspaceResult(ok=False, error_kind=f"unknown_op: {kind_val}")
 
     def apply(self, op: WorkspaceOp) -> WorkspaceResult:
-        raise NotImplementedError
+        kind_val = op.kind.value if hasattr(op.kind, "value") else str(op.kind)
+
+        # diff is non-mutating
+        if kind_val == "diff":
+            return self._apply_unlocked(op, kind_val)
+
+        # Mutating operations take branch file lock
+        lock_name = (op.branch or (f"task_{op.task_id}" if op.task_id else "main")).replace("/", "_")
+        lock_path = self.repo_dir / ".asf_locks" / f"{lock_name}.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            lock_cm: Any = get_platform().lock_file(lock_path, timeout_s=10.0)
+        except Exception as e:
+            return WorkspaceResult(ok=False, error_kind=f"lock_failed: {e}")
+
+        with lock_cm:
+            return self._apply_unlocked(op, kind_val)
 
     def gc(self, keep_tagged: bool = True) -> int:
-        raise NotImplementedError
+        code, out, _ = self._run_git(["worktree", "prune"])
+        return 1 if code == 0 else 0
