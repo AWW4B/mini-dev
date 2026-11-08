@@ -18,14 +18,50 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m2_request/test_document_ingestion.py` on Windows and Linux once src/asf/m2_request/document_ingestion.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m2_request/test_document_ingestion.py` and `uv run mypy tests/m2_request/test_document_ingestion.py` are clean.
 
+from pathlib import Path
+from typing import Any
 
-from asf.m2_request.document_ingestion import IngestedDocument, ingest_document  # noqa: F401
+from asf.m2_request.document_ingestion import IngestedDocument, ingest_document
 
 
 def test_ingested_document_meets_contract() -> None:
     """Prove IngestedDocument behaves as declared in src/asf/m2_request/document_ingestion.py."""
-    raise NotImplementedError("write this test before implementing IngestedDocument")
+    doc = IngestedDocument(
+        original_ref="sha256:111",
+        markdown_ref="sha256:222",
+        section_ids=["intro", "details"],
+        token_estimate=150,
+        quality_score=0.95,
+        extractor="markitdown",
+    )
+    assert doc.original_ref == "sha256:111"
+    assert doc.markdown_ref == "sha256:222"
+    assert doc.section_ids == ["intro", "details"]
+    assert doc.token_estimate == 150
+    assert doc.quality_score == 0.95
+    assert doc.extractor == "markitdown"
 
-def test_ingest_document_meets_contract() -> None:
+
+def test_ingest_document_meets_contract(tmp_path: Path, fake_paths: Any) -> None:
     """Prove ingest_document behaves as declared in src/asf/m2_request/document_ingestion.py."""
-    raise NotImplementedError("write this test before implementing ingest_document")
+    _ = fake_paths
+
+    doc_file = tmp_path / "architecture.md"
+    doc_file.write_text(
+        "# System Architecture\n\n"
+        "This describes the AI Software Factory architecture.\n\n"
+        "## Components\n\n"
+        "- M1 CLI\n"
+        "- M2 Request\n"
+        "- M3 Orchestration\n",
+        encoding="utf-8",
+    )
+
+    ingested = ingest_document(doc_file)
+
+    assert ingested.original_ref.startswith("sha256:")
+    assert ingested.markdown_ref.startswith("sha256:")
+    assert any("system-architecture" in sid or "components" in sid for sid in ingested.section_ids)
+    assert ingested.token_estimate > 0
+    assert ingested.quality_score >= 0.9
+    assert ingested.extractor in {"markitdown", "plain_text", "docling", "pypdf"}

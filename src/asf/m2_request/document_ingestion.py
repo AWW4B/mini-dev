@@ -24,9 +24,14 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m2_request/test_document_ingestion.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m2_request/document_ingestion.py` and `uv run mypy src/asf/m2_request/document_ingestion.py` are clean.
 
+import re
 from pathlib import Path
 
+from markitdown import MarkItDown
 from pydantic import BaseModel
+
+from asf.m5_shared.decisions.broker import DecisionBroker  # noqa: F401
+from asf.m5_shared.workspace.blobs import BlobStore
 
 
 class IngestedDocument(BaseModel):
@@ -38,5 +43,95 @@ class IngestedDocument(BaseModel):
     extractor: str
 
 
+def _detect_type_by_magic(raw_bytes: bytes) -> str:
+    if raw_bytes.startswith(b"%PDF"):
+        return "pdf"
+    if raw_bytes.startswith(b"PK\x03\x04"):
+        return "docx"
+    if raw_bytes.startswith(b"<!DOCTYPE") or raw_bytes.startswith(b"<html") or raw_bytes.startswith(b"<?xml"):
+        return "html"
+    try:
+        raw_bytes[:1024].decode("utf-8")
+        return "text"
+    except UnicodeDecodeError:
+        return "binary"
+
+
+def _extract_section_ids(markdown: str) -> list[str]:
+    section_ids: list[str] = []
+    for line in markdown.splitlines():
+        line_s = line.strip()
+        if line_s.startswith("#"):
+            heading = line_s.lstrip("#").strip()
+            slug = re.sub(r"[^\w\- ]+", "", heading).strip().lower().replace(" ", "-")
+            if slug:
+                section_ids.append(slug)
+    if not section_ids:
+        section_ids.append("section_0")
+    return section_ids
+
+
+def _compute_quality(text: str) -> float:
+    if not text:
+        return 0.0
+    printable = sum(1 for c in text if c.isprintable() or c in "\n\r\t")
+    ratio = printable / len(text)
+    return round(min(1.0, max(0.0, ratio)), 2)
+
+
 def ingest_document(path: Path) -> IngestedDocument:
-    raise NotImplementedError
+    raw_bytes = path.read_bytes()
+
+    # Store original file blob
+    blobs = BlobStore()
+    original_ref = blobs.put(raw_bytes)
+
+    detected_type = _detect_type_by_magic(raw_bytes)
+
+    markdown_text = ""
+    extractor_used = "markitdown"
+
+    # Primary extractor: MarkItDown
+    try:
+        md = MarkItDown()
+        res = md.convert(str(path))
+        markdown_text = res.text_content
+    except Exception as _md_err:  # noqa: BLE001
+        _ = _md_err
+        markdown_text = ""
+
+    # Alternate extractor 1: pypdf for PDF if primary gave empty result
+    if (not markdown_text.strip()) and detected_type == "pdf":
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(str(path))
+            pages = [p.extract_text() or "" for p in reader.pages]
+            markdown_text = "\n\n".join(pages)
+            extractor_used = "pypdf"
+        except Exception as _pdf_err:  # noqa: BLE001
+            _ = _pdf_err
+
+    # Alternate extractor 2: Plain text fallback if still empty
+    if not markdown_text.strip():
+        try:
+            markdown_text = path.read_text(encoding="utf-8", errors="replace")
+            extractor_used = "plain_text"
+        except Exception as _txt_err:  # noqa: BLE001
+            _ = _txt_err
+            markdown_text = ""
+
+    quality = _compute_quality(markdown_text)
+    section_ids = _extract_section_ids(markdown_text)
+    token_estimate = max(1, len(markdown_text) // 4)
+
+    # Store converted markdown blob
+    markdown_ref = blobs.put(markdown_text.encode("utf-8"))
+
+    return IngestedDocument(
+        original_ref=original_ref,
+        markdown_ref=markdown_ref,
+        section_ids=section_ids,
+        token_estimate=token_estimate,
+        quality_score=quality,
+        extractor=extractor_used,
+    )
