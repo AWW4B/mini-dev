@@ -20,6 +20,7 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/events/test_fanout.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/events/fanout.py` and `uv run mypy src/asf/m5_shared/events/fanout.py` are clean.
 
+import time
 from collections.abc import Iterator
 
 from asf.contracts.events import EventEnvelope, EventKind
@@ -27,9 +28,35 @@ from asf.m5_shared.events.event_log import EventLog
 
 
 class EventFanout:
-    def __init__(self, log: EventLog) -> None:
-        raise NotImplementedError
+    log: EventLog
+    poll_interval: float
+    _stopped: bool
+
+    def __init__(self, log: EventLog, poll_interval: float = 0.1) -> None:
+        self.log = log
+        self.poll_interval = poll_interval
+        self._stopped = False
+
+    def stop(self) -> None:
+        self._stopped = True
 
     def follow(self, run_id: str, after_seq: int, kinds: set[EventKind] | None = None) -> Iterator[EventEnvelope]:
         """Yield events after the cursor, blocking politely until cancelled."""
-        raise NotImplementedError
+        cursor = after_seq
+        kinds_set = (
+            {k.value if hasattr(k, "value") else str(k) for k in kinds} if kinds is not None else None
+        )
+
+        while not self._stopped:
+            batch = self.log.read(run_id=run_id, after_seq=cursor, limit=100)
+            if batch:
+                for evt in batch:
+                    cursor = max(cursor, evt.seq)
+                    evt_kind_val = evt.kind.value if hasattr(evt.kind, "value") else str(evt.kind)
+                    if kinds_set is None or evt_kind_val in kinds_set:
+                        yield evt
+            else:
+                if self.poll_interval > 0:
+                    time.sleep(self.poll_interval)
+                else:
+                    break
