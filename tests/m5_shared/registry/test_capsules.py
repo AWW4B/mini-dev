@@ -17,10 +17,40 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/registry/test_capsules.py` on Windows and Linux once src/asf/m5_shared/registry/capsules.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/registry/test_capsules.py` and `uv run mypy tests/m5_shared/registry/test_capsules.py` are clean.
 
+from types import SimpleNamespace
 
-from asf.m5_shared.registry.capsules import render_capsule  # noqa: F401
+import pytest
+
+from asf.m5_shared.registry.capsules import render_capsule
 
 
 def test_render_capsule_meets_contract() -> None:
     """Prove render_capsule behaves as declared in src/asf/m5_shared/registry/capsules.py."""
-    raise NotImplementedError("write this test before implementing render_capsule")
+    op = SimpleNamespace(
+        name="login",
+        signature="login(user: str, secret: str) -> Token",
+        params={"user": "username", "secret": "plaintext password"},
+        returns="Token",
+        errors=["InvalidCredentialsError"],
+        example='login("alice", "hunter2")',
+    )
+    spec = SimpleNamespace(
+        module_id="auth",
+        version="1.0.0",
+        operations=[op],
+    )
+
+    capsule = render_capsule(spec, "login")  # type: ignore[arg-type]
+    assert capsule.module_id == "auth"
+    assert capsule.version == "1.0.0"
+    assert capsule.operation == "login"
+    assert 3 <= len(capsule.lines) <= 5
+    assert any("SIG:" in line for line in capsule.lines)
+    assert any("PARAMS:" in line for line in capsule.lines)
+    assert any("RETURNS:" in line for line in capsule.lines)
+    assert any("ERRORS:" in line for line in capsule.lines)
+    assert any("EX:" in line for line in capsule.lines)
+
+    # Missing operation raises KeyError
+    with pytest.raises(KeyError):
+        render_capsule(spec, "logout")  # type: ignore[arg-type]

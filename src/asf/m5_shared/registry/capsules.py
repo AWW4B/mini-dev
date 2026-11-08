@@ -22,4 +22,25 @@ from asf.contracts.contract_spec import ContractCapsule, ContractSpec
 
 
 def render_capsule(spec: ContractSpec, operation: str) -> ContractCapsule:
-    raise NotImplementedError
+    op = next((o for o in spec.operations if o.name == operation), None)
+    if op is None:
+        raise KeyError(f"Operation '{operation}' not found in contract {spec.module_id}@{spec.version}")
+
+    params_str = ", ".join(f"{k}: {v}" for k, v in op.params.items()) if op.params else "none"
+    errors_str = ", ".join(op.errors) if op.errors else "none"
+    example_str = op.example if op.example else "none"
+
+    lines = [
+        f"SIG: {op.signature}",
+        f"PARAMS: {params_str}",
+        f"RETURNS: {op.returns}",
+        f"ERRORS: {errors_str}",
+        f"EX: {example_str}",
+    ]
+
+    return ContractCapsule(
+        module_id=spec.module_id,
+        version=spec.version,
+        operation=operation,
+        lines=lines,
+    )
