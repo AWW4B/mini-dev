@@ -18,9 +18,61 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/gateway/test_usage_callback.py` on Windows and Linux once src/asf/m5_shared/gateway/usage_callback.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/gateway/test_usage_callback.py` and `uv run mypy tests/m5_shared/gateway/test_usage_callback.py` are clean.
 
 
-from asf.m5_shared.gateway.usage_callback import UsageCallbackHandler  # noqa: F401
+from types import SimpleNamespace
+from typing import Any
+
+from asf.m5_shared.gateway.usage_callback import UsageCallbackHandler
+
+
+class FakeCollector:
+    def __init__(self) -> None:
+        self.recorded_calls: list[Any] = []
+
+    def record_call(self, metric: Any) -> None:
+        self.recorded_calls.append(metric)
 
 
 def test_usage_callback_handler_meets_contract() -> None:
     """Prove UsageCallbackHandler behaves as declared in src/asf/m5_shared/gateway/usage_callback.py."""
-    raise NotImplementedError("write this test before implementing UsageCallbackHandler")
+    collector = FakeCollector()
+    handler = UsageCallbackHandler(
+        run_id="run-1",
+        task_id="task-1",
+        role="developer",
+        strategy="tool_loop",
+        collector=collector,  # type: ignore[arg-type]
+    )
+
+    assert handler.run_id == "run-1"
+    assert handler.task_id == "task-1"
+    assert handler.role == "developer"
+    assert handler.strategy == "tool_loop"
+    assert handler.total_tokens_in == 0
+    assert handler.total_tokens_out == 0
+
+    # Simulate LLM start and end
+    handler.on_llm_start({})
+
+    fake_response = SimpleNamespace(
+        llm_output={
+            "model_name": "gpt-4o",
+            "token_usage": {
+                "prompt_tokens": 120,
+                "completion_tokens": 40,
+            },
+        }
+    )
+    handler.on_llm_end(fake_response)
+
+    assert handler.total_tokens_in == 120
+    assert handler.total_tokens_out == 40
+    assert len(collector.recorded_calls) == 1
+
+    metric = collector.recorded_calls[0]
+    assert metric.run_id == "run-1"
+    assert metric.task_id == "task-1"
+    assert metric.role == "developer"
+    assert metric.strategy == "tool_loop"
+    assert metric.tokens_in == 120
+    assert metric.tokens_out == 40
+    assert metric.latency_ms >= 0
