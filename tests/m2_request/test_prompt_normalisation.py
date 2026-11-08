@@ -17,10 +17,37 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m2_request/test_prompt_normalisation.py` on Windows and Linux once src/asf/m2_request/prompt_normalisation.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m2_request/test_prompt_normalisation.py` and `uv run mypy tests/m2_request/test_prompt_normalisation.py` are clean.
 
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock
 
-from asf.m2_request.prompt_normalisation import normalise_prompt  # noqa: F401
+from asf.m2_request.prompt_normalisation import normalise_prompt
 
 
 def test_normalise_prompt_meets_contract() -> None:
     """Prove normalise_prompt behaves as declared in src/asf/m2_request/prompt_normalisation.py."""
-    raise NotImplementedError("write this test before implementing normalise_prompt")
+    # 1. Deterministic normalization without gateway
+    raw = "  Implement a feature\xa0with “smart quotes” and ‘single quotes’.  \r\n\r\n\r\n* step 1\r\n+ step 2   \n"
+    norm = normalise_prompt(raw)
+
+    assert "“" not in norm
+    assert "”" not in norm
+    assert "\r" not in norm
+    assert "\xa0" not in norm
+    assert '"smart quotes"' in norm
+    assert "'single quotes'" in norm
+    assert "- step 1" in norm
+    assert "- step 2" in norm
+
+    # 2. Empty input
+    assert normalise_prompt("") == ""
+    assert normalise_prompt("   \n\r\n  ") == ""
+
+    # 3. Optional gateway enhancement
+    fake_gateway: Any = MagicMock()
+    fake_model = MagicMock()
+    fake_model.invoke.return_value = SimpleNamespace(content="Optimized prompt text by T1 model")
+    fake_gateway.model_for.return_value = fake_model
+
+    enhanced = normalise_prompt("Fix the login bug", gateway=fake_gateway)
+    assert enhanced == "Optimized prompt text by T1 model"
