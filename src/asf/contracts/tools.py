@@ -13,6 +13,7 @@
 #   - called by src/asf/platform/base.py: SandboxTier
 #   - called by src/asf/platform/fallback.py: SandboxTier
 #   - called by tests/contracts/test_tools.py: SandboxTier, ToolSpec, ToolInvocation, ToolResult, SkillManifest
+#   - called by src/asf/m4_execution/worker/strategies.py: ToolInvocation
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

@@ -15,6 +15,7 @@
 #   - called by src/asf/m5_shared/tools/codeexec/runner.py: ToolExecutor
 #   - called by src/asf/m4_execution/worker/strategies.py: ToolExecutor
 #   - called by tests/m5_shared/tools/test_executor.py: ToolExecutor
+#   - called by src/asf/m4_execution/worker/worker_graph.py: ToolExecutor
 #   - emits/consumes: emits TOOL_CALLED (tool, args_summary, reason, approved|denied|pending_approval, sandbox_tier, via_code_exec) and TOOL_RESULT (summary, exit_status, duration, output_ref) for EVERY call, including calls from code_exec scripts
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

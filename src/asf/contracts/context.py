@@ -7,6 +7,7 @@
 #   - imports from src/asf/contracts/ids.py: TaskId (typed ids)
 #   - called by src/asf/m5_shared/context/context_service.py: ContextPack, ContextRequest
 #   - called by tests/contracts/test_context.py: ContextTier, ContextRequest, ContextItem, ContextPack
+#   - called by src/asf/m4_execution/worker/worker_graph.py: ContextItem, ContextRequest
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
