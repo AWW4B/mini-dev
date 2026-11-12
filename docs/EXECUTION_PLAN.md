@@ -79,17 +79,17 @@ Rules:
 
 Goal: CI green on `main` with honest signals, before any feature work.
 
-- [ ] **Forbidden scan false positives.** The research document legitimately names container runtimes when comparing sandboxes. Stop and ask the user to approve one of: (a) add `AI_Software_Factory_Research_and_Decisions.md` to `SKIP_FILES` in `scripts/scan_forbidden.py` (recommended, smallest diff; also update `tests/scripts/test_scan_forbidden.py` if it pins the set), or (b) reword the document. This edits a contract file, so it needs the user's OK.
-- [ ] **Placeholder tests must not hide real failures.** In `tests/conftest.py` add a `pytest_runtest_makereport` hookwrapper that turns a `NotImplementedError` whose message starts with `"write this test"` into `xfail` (non-strict). Real failures stay red. This shim is removed in Phase 7.
-- [ ] **Record Batch 5** in `docs/CONTINUATION.md` (context, tools, codeexec, state_store backup/recovery) and add a pointer to this file.
-- [ ] CI shows green on `main` for ubuntu and windows.
+- [x] **Forbidden scan false positives.** The research document legitimately names container runtimes when comparing sandboxes. Stop and ask the user to approve one of: (a) add `AI_Software_Factory_Research_and_Decisions.md` to `SKIP_FILES` in `scripts/scan_forbidden.py` (recommended, smallest diff; also update `tests/scripts/test_scan_forbidden.py` if it pins the set), or (b) reword the document. This edits a contract file, so it needs the user's OK.
+- [x] **Placeholder tests must not hide real failures.** In `tests/conftest.py` add a `pytest_runtest_makereport` hookwrapper that turns a `NotImplementedError` whose message starts with `"write this test"` into `xfail` (non-strict). Real failures stay red. This shim is removed in Phase 7.
+- [x] **Record Batch 5** in `docs/CONTINUATION.md` (context, tools, codeexec, state_store backup/recovery) and add a pointer to this file.
+- [x] CI shows green on `main` for ubuntu and windows.
 
 ### Phase 1: Tests for already-implemented code (`chore/contract-tests`)
 
 Code that is "done" but untested is not done. Write real tests; no source changes unless a test exposes a bug (then fix it in Phase 2's branch for that module and note it).
 
-- [ ] `tests/contracts/test_*.py`, all 17 files: validation, defaults, frozen/extra-forbid behaviour, JSON round-trip, enum values, every error class's message and hierarchy (`AsfError` subclasses).
-- [ ] `tests/platform/test_base.py`.
+- [x] `tests/contracts/test_*.py`, all 17 files: validation, defaults, frozen/extra-forbid behaviour, JSON round-trip, enum values, every error class's message and hierarchy (`AsfError` subclasses).
+- [x] `tests/platform/test_base.py` (was already a real test; the `NotImplementedError` in it sits inside a dummy adapter).
 
 ### Phase 2: Hardening existing code (`fix/<module>-hardening`, one branch per module)
 
