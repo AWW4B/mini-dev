@@ -22,6 +22,7 @@
 #   - called by tests/web/test_server.py: PolicyDenied
 #   - called by src/asf/m5_shared/state_store/recovery.py: AsfError
 #   - called by src/asf/config/loader.py: ConfigError
+#   - called by src/asf/m5_shared/workspace/blobs.py: AsfError
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

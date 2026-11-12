@@ -4,7 +4,7 @@
 # OWNS: Test cases for src/asf/m5_shared/workspace/blobs.py
 # DOES NOT OWN: Production code; fixtures shared with other modules (put those in tests/conftest.py)
 # CONNECTS TO (external boundaries only):
-#   - imports from src/asf/m5_shared/workspace/blobs.py: BlobStore (unit under test)
+#   - imports from src/asf/m5_shared/workspace/blobs.py: BlobNotFound, BlobStore (unit under test)
 #   - imports from tests/conftest.py: fake_paths (shared fixtures)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from asf.m5_shared.workspace.blobs import BlobStore
+from asf.m5_shared.workspace.blobs import BlobNotFound, BlobStore
 
 
 def test_blob_store_meets_contract(tmp_path: Path) -> None:
@@ -60,3 +60,52 @@ def test_blob_store_meets_contract(tmp_path: Path) -> None:
     missing_ref = f"sha256:{'0' * 64}"
     with pytest.raises(FileNotFoundError):
         store.get(missing_ref)
+
+
+def test_missing_blob_error_is_both_an_asf_error_and_a_file_not_found(tmp_path: Path) -> None:
+    store = BlobStore(tmp_path)
+    with pytest.raises(BlobNotFound) as info:
+        store.get(f"sha256:{'1' * 64}")
+    assert any(base.__name__ == "AsfError" for base in type(info.value).__mro__)
+    assert isinstance(info.value, FileNotFoundError)
+
+
+@pytest.mark.parametrize("ref", ["sha256:../../secret", "sha256:" + "z" * 64, "sha256:abc", "../etc/passwd", "", "sha256:" + "A" * 64])
+def test_malformed_or_path_traversing_refs_are_rejected_before_touching_the_disk(tmp_path: Path, ref: str) -> None:
+    outside = tmp_path / "secret"
+    outside.write_bytes(b"do not read")
+    store = BlobStore(tmp_path / "blobs")
+    with pytest.raises(BlobNotFound):
+        store.get(ref)
+
+
+def test_put_leaves_no_temporary_files_behind(tmp_path: Path) -> None:
+    store = BlobStore(tmp_path)
+    store.put(b"payload")
+    store.put(b"payload")
+    leftovers = [p for p in tmp_path.rglob("*") if p.is_file() and p.name.startswith(".tmp-")]
+    assert leftovers == []
+
+
+def test_concurrent_writers_of_the_same_blob_all_succeed(tmp_path: Path) -> None:
+    import threading
+
+    store = BlobStore(tmp_path)
+    data = b"x" * 200_000
+    refs: list[str] = []
+    errors: list[BaseException] = []
+
+    def writer() -> None:
+        try:
+            refs.append(store.put(data))
+        except BaseException as err:  # noqa: BLE001 - the test records any failure
+            errors.append(err)
+
+    threads = [threading.Thread(target=writer) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert len(set(refs)) == 1
+    assert store.get(refs[0]) == data
