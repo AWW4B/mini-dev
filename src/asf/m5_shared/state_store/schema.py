@@ -4,6 +4,7 @@
 # OWNS: Table definitions (runs, tasks, attempts, leases, commands, decisions, events, outbox, call_metrics, tool_metrics, limit_events, contracts, memory) and migrations
 # DOES NOT OWN: Queries and business rules (store.py)
 # CONNECTS TO (external boundaries only):
+#   - imports from src/asf/contracts/errors.py: ConfigError (a database from a newer version)
 #   - called by src/asf/m5_shared/state_store/store.py: migrate
 #   - called by tests/m5_shared/state_store/test_schema.py: migrate, SCHEMA_VERSION
 #   - emits/consumes: none
@@ -23,7 +24,9 @@
 
 import sqlite3
 
-SCHEMA_VERSION: int = 1
+from asf.contracts.errors import ConfigError
+
+SCHEMA_VERSION: int = 2  # 2: call_metrics and tool_metrics keep role, strategy, estimate flag and approval (D-19 comparability)
 
 _CREATE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -179,6 +182,31 @@ CREATE TABLE IF NOT EXISTS memory (
 """
 
 
+# Forward-only column additions per table, applied when a column is missing (so new and old databases converge).
+_ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "call_metrics": [
+        ("role", "TEXT NOT NULL DEFAULT ''"),
+        ("strategy", "TEXT NOT NULL DEFAULT ''"),
+        ("estimated", "INTEGER NOT NULL DEFAULT 0"),
+        ("retry_no", "INTEGER NOT NULL DEFAULT 0"),
+    ],
+    "tool_metrics": [
+        ("strategy", "TEXT NOT NULL DEFAULT ''"),
+        ("approval", "TEXT NOT NULL DEFAULT ''"),
+        ("sandbox_tier", "TEXT NOT NULL DEFAULT ''"),
+        ("exit_status", "TEXT NOT NULL DEFAULT ''"),
+    ],
+}
+
+
+def _stored_version(conn: sqlite3.Connection) -> int:
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    except sqlite3.OperationalError:
+        return 0  # a brand new database has no meta table yet
+    return int(row[0]) if row else 0
+
+
 def migrate(conn: sqlite3.Connection) -> None:
     """Create or upgrade all tables of state.db to SCHEMA_VERSION inside one transaction."""
     # A connection opened with autocommit=False is always inside a transaction, and SQLite refuses to change
@@ -193,8 +221,20 @@ def migrate(conn: sqlite3.Connection) -> None:
     finally:
         conn.autocommit = previous_autocommit
 
+    stored = _stored_version(conn)
+    if stored > SCHEMA_VERSION:
+        raise ConfigError(
+            f"This state database was written by a newer version (schema {stored}); this version understands schema {SCHEMA_VERSION}. "
+            "Upgrade the software instead of opening the database with an older one."
+        )
+
     with conn:
         conn.executescript(_CREATE_TABLES_SQL)
+        for table, columns in _ADDED_COLUMNS.items():
+            present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}  # noqa: S608 - constant table names
+            for name, definition in columns:
+                if name not in present:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")  # noqa: S608 - constants only
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?);",
             (str(SCHEMA_VERSION),),

@@ -84,3 +84,38 @@ def test_migrate_really_enables_wal_normal_sync_and_foreign_keys(tmp_path: Path)
     assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     conn.close()
+
+
+def test_a_version_1_database_is_upgraded_in_place_without_losing_rows(tmp_path: Path) -> None:
+    conn = sqlite3.connect(str(tmp_path / "old.db"), autocommit=False)
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute("INSERT INTO meta VALUES ('schema_version', '1')")
+    conn.execute(
+        "CREATE TABLE call_metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, task_id TEXT, provider TEXT NOT NULL, "
+        "model TEXT NOT NULL, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, "
+        "cost REAL NOT NULL DEFAULT 0.0, duration_ms INTEGER NOT NULL DEFAULT 0, timestamp TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO call_metrics (run_id, provider, model, timestamp) VALUES ('r1', 'p', 'm', 't')")
+    conn.commit()
+
+    migrate(conn)
+    migrate(conn)  # idempotent
+
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(call_metrics)")}
+    assert {"role", "strategy", "estimated", "retry_no"} <= columns
+    assert conn.execute("SELECT run_id, role FROM call_metrics").fetchone()[:] == ("r1", "")
+    assert conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == str(SCHEMA_VERSION)
+    conn.close()
+
+
+def test_a_database_from_a_newer_version_is_refused(tmp_path: Path) -> None:
+    import pytest
+
+    conn = sqlite3.connect(str(tmp_path / "new.db"), autocommit=False)
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute("INSERT INTO meta VALUES ('schema_version', ?)", (str(SCHEMA_VERSION + 1),))
+    conn.commit()
+    with pytest.raises(Exception) as info:  # noqa: PT011 - ConfigError lives in contracts, which this test does not import
+        migrate(conn)
+    assert type(info.value).__name__ == "ConfigError" and "newer version" in str(info.value)
+    conn.close()
