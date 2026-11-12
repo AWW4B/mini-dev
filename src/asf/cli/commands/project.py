@@ -6,6 +6,9 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/m5_shared/state_store/store.py: StateStore (read-only queries / command rows)
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
+#   - imports from src/asf/cli/context.py: EXIT_OK, EXIT_USER, guard, load_projects, register_project, renderer_for, state_db (shared CLI plumbing)
+#   - imports from src/asf/contracts/errors.py: ConfigError (a name already in use)
+#   - imports from src/asf/contracts/history.py: HistoryQuery (recent runs)
 #   - called by src/asf/cli/app.py: register
 #   - called by tests/cli/commands/test_project.py: project_new, project_list, project_show, register
 #   - emits/consumes: none
@@ -28,19 +31,82 @@ from pathlib import Path
 
 import typer
 
+from asf.cli.context import EXIT_OK, EXIT_USER, guard, load_projects, register_project, renderer_for, state_db
+from asf.contracts.errors import ConfigError
+from asf.contracts.history import HistoryQuery
+from asf.m5_shared.state_store.store import StateStore
+
 
 def project_new(name: str, path: Path) -> int:
-    raise NotImplementedError
+    """Create a project directory with its state store and register it under ``name``."""
+    root = path.resolve()
+    if name in load_projects() and load_projects()[name] != str(root):
+        raise ConfigError(f"The name '{name}' is already used by {load_projects()[name]}.")
+    (root / ".factory").mkdir(parents=True, exist_ok=True)
+    StateStore.open(state_db(root)).close()
+    ignore = root / ".factory" / ".gitignore"
+    if not ignore.exists():
+        ignore.write_text("*\n", encoding="utf-8")
+    register_project(name, root)
+    renderer_for("plain").message(f"Project '{name}' created in {root}", "success")
+    return EXIT_OK
+
+
+def _runs_of(root: str) -> int:
+    db = state_db(Path(root))
+    if not db.is_file():
+        return 0
+    store = StateStore.open(db, readonly=True)
+    try:
+        return int(store.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0])
+    finally:
+        store.close()
 
 
 def project_list(output: str = "rich") -> int:
-    raise NotImplementedError
+    renderer = renderer_for(output)
+    projects = load_projects()
+    renderer.table("Projects", ["name", "directory", "runs"], [[n, p, _runs_of(p)] for n, p in sorted(projects.items())])
+    return EXIT_OK
 
 
 def project_show(project: str, output: str = "rich") -> int:
-    raise NotImplementedError
+    renderer = renderer_for(output)
+    projects = load_projects()
+    root = projects.get(project)
+    if root is None:
+        renderer.message(f"Unknown project '{project}'. `factory project list` shows the known ones.", "error")
+        return EXIT_USER
+    db = state_db(Path(root))
+    renderer.record("Project", {"name": project, "directory": root, "state": "ready" if db.is_file() else "no state database yet (run `factory init` there)"})
+    if db.is_file():
+        store = StateStore.open(db, readonly=True)
+        try:
+            history = store.history(HistoryQuery.model_validate({"project_id": project, "limit": 10}))
+        finally:
+            store.close()
+        renderer.table(
+            "Recent runs",
+            ["run", "status", "last activity", "cost"],
+            [[r.run_id, r.status, r.last_activity, f"{r.cost:.4f}{' EST' if r.cost_estimated else ''}"] for r in history.runs],
+        )
+    return EXIT_OK
 
 
 def register(app: typer.Typer) -> None:
     """Attach the `project` command(s) to the root Typer app."""
-    raise NotImplementedError
+    group = typer.Typer(help="Create and inspect projects.", no_args_is_help=True)
+
+    @group.command("new")
+    def new_cmd(name: str, path: Path = typer.Argument(None, help="Directory (default: ./NAME)")) -> None:
+        raise typer.Exit(code=guard(lambda: project_new(name, path or Path.cwd() / name)))
+
+    @group.command("list")
+    def list_cmd(output: str = typer.Option("rich", "--output", "-o")) -> None:
+        raise typer.Exit(code=guard(lambda: project_list(output)))
+
+    @group.command("show")
+    def show_cmd(project: str, output: str = typer.Option("rich", "--output", "-o")) -> None:
+        raise typer.Exit(code=guard(lambda: project_show(project, output)))
+
+    app.add_typer(group, name="project")

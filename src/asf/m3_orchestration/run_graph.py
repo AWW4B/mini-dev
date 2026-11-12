@@ -447,6 +447,9 @@ def _build_execution(components: dict[str, Any], project_root: Path, run_id: str
     workspace = overrides.get("workspace") or Workspace(project_root)
     runtime = overrides.get("runtime") or LocalRuntime(max_slots=1)
     gateway = components.get("gateway") or ModelGateway(str(overrides.get("profile_name", "hybrid")), components.get("budget") or _default_budget(run_id))
+    for role, name in dict(overrides.get("model_overrides", {})).items():  # --model ROLE=NAME
+        gateway.roles.setdefault(role, {})["model"] = name
+    gateway.strategies.update(dict(overrides.get("strategy_overrides", {})))  # --strategy ROLE=NAME
     tools = ToolRegistry()
     register_builtin_tools(tools)
     executor = ToolExecutor(registry=tools, broker=components["decision_broker"])

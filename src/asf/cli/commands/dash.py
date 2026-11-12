@@ -6,6 +6,7 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/cli/views/dash_view.py: DashView (rendering)
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
+#   - imports from src/asf/cli/context.py: EXIT_OK, default_output, guard, renderer_for (shared CLI plumbing)
 #   - called by src/asf/cli/app.py: register
 #   - called by tests/cli/commands/test_dash.py: dash, register
 #   - emits/consumes: none
@@ -23,11 +24,23 @@
 
 import typer
 
+from asf.cli.context import EXIT_OK, default_output, guard, renderer_for
+from asf.cli.views.dash_view import DashView
+
 
 def dash(run_id: str | None) -> int:
-    raise NotImplementedError
+    """The live dashboard on a terminal (Ctrl+C only closes the view); a single snapshot when piped."""
+    view = DashView(renderer_for(default_output()), run_id)
+    if default_output() == "rich":
+        view.live()
+    else:
+        view.render_once()
+    return EXIT_OK
 
 
 def register(app: typer.Typer) -> None:
     """Attach the `dash` command(s) to the root Typer app."""
-    raise NotImplementedError
+
+    @app.command("dash", help="Live dashboard: status, queue, tokens, cost.")
+    def dash_cmd(run_id: str | None = typer.Argument(None)) -> None:
+        raise typer.Exit(code=guard(lambda: dash(run_id)))

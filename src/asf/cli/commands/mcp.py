@@ -6,6 +6,7 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/m5_shared/tools/mcp_client.py: McpManager (MCP)
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
+#   - imports from src/asf/cli/context.py: EXIT_OK, EXIT_USER, guard, project_root, renderer_for (shared CLI plumbing)
 #   - called by src/asf/cli/app.py: register
 #   - called by tests/cli/commands/test_mcp.py: mcp_list, mcp_test, register
 #   - emits/consumes: none
@@ -23,15 +24,42 @@
 
 import typer
 
+from asf.cli.context import EXIT_OK, EXIT_USER, guard, project_root, renderer_for
+from asf.m5_shared.tools.mcp_client import McpManager
+
 
 def mcp_list(output: str = "rich") -> int:
-    raise NotImplementedError
+    """The MCP servers declared in mcp.toml (default-deny: nothing else is ever connected)."""
+    manager = McpManager(project_root())
+    names = manager.list_servers()
+    renderer_for(output).table("MCP servers", ["name"], [[n] for n in names])
+    return EXIT_OK
 
 
 def mcp_test(name: str) -> int:
-    raise NotImplementedError
+    manager = McpManager(project_root())
+    renderer = renderer_for("plain")
+    if name not in manager.list_servers():
+        renderer.message(f"'{name}' is not declared in mcp.toml. `factory mcp list` shows the declared servers.", "error")
+        return EXIT_USER
+    report = manager.test_server(name)
+    renderer.record(
+        f"MCP server {name}",
+        {"reachable": report.reachable, "protocol version": report.protocol_version or "-", "tools": ", ".join(report.tools) or "-", "problem": report.problem or "-"},
+    )
+    return EXIT_OK if report.reachable else EXIT_USER
 
 
 def register(app: typer.Typer) -> None:
     """Attach the `mcp` command(s) to the root Typer app."""
-    raise NotImplementedError
+    group = typer.Typer(help="List and test MCP servers.", no_args_is_help=True)
+
+    @group.command("list")
+    def list_cmd(output: str = typer.Option("rich", "--output", "-o")) -> None:
+        raise typer.Exit(code=guard(lambda: mcp_list(output)))
+
+    @group.command("test")
+    def test_cmd(name: str) -> None:
+        raise typer.Exit(code=guard(lambda: mcp_test(name)))
+
+    app.add_typer(group, name="mcp")

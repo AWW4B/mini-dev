@@ -17,6 +17,8 @@
 #   - called by src/asf/m3_orchestration/decomposition/decomposition_graph.py: DecisionRequest
 #   - called by src/asf/m3_orchestration/run_graph.py: DecisionRequest
 #   - called by tests/cli/views/test_inbox_view.py: DecisionRequest
+#   - called by src/asf/cli/commands/inbox.py: DecisionResolved
+#   - called by tests/cli/commands/test_inbox.py: DecisionRequest
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

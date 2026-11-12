@@ -8,6 +8,7 @@
 #   - called by src/asf/m5_shared/state_store/store.py: HistoryQuery, HistoryResult
 #   - called by src/asf/cli/commands/history.py: HistoryQuery
 #   - called by tests/contracts/test_history.py: HistoryQuery, RunSummary, HistoryResult
+#   - called by src/asf/cli/commands/project.py: HistoryQuery
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

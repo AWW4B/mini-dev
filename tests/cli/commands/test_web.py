@@ -17,14 +17,63 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/cli/commands/test_web.py` on Windows and Linux once src/asf/cli/commands/web.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/cli/commands/test_web.py` and `uv run mypy tests/cli/commands/test_web.py` are clean.
 
+import importlib.util
+import threading
+from typing import Any
 
-from asf.cli.commands.web import register, web  # noqa: F401
+import pytest
+import typer
+from typer.testing import CliRunner
+
+import asf.cli.commands.web as web_mod
+from asf.cli.commands.web import register, web
 
 
-def test_web_meets_contract() -> None:
-    """Prove web behaves as declared in src/asf/cli/commands/web.py."""
-    raise NotImplementedError("write this test before implementing web")
+def test_a_missing_extra_exits_2_with_the_install_hint(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+    assert web(None) == 2
+    assert "uv sync --extra web" in capsys.readouterr().err
 
-def test_register_meets_contract() -> None:
-    """Prove register behaves as declared in src/asf/cli/commands/web.py."""
-    raise NotImplementedError("write this test before implementing register")
+
+def test_the_viewer_is_served_on_loopback_only(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    served: list[tuple[Any, str, int]] = []
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(web_mod, "serve", lambda run_id, host, port: served.append((run_id, host, port)))
+    assert web("run1", 9000, open_browser=False) == 0
+    assert served == [("run1", "127.0.0.1", 9000)]
+    assert "http://127.0.0.1:9000/" in capsys.readouterr().out
+
+
+def test_the_default_port_and_browser_opening(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[str] = []
+    served: list[int] = []
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(web_mod, "serve", lambda run_id, host, port: served.append(port))
+
+    class _Timer:
+        def __init__(self, delay: float, fn: Any, args: list[str]) -> None:
+            opened.extend(args)
+
+        def start(self) -> None:
+            pass
+
+    monkeypatch.setattr(threading, "Timer", _Timer)
+    web(None)
+    assert served == [8765] and opened == ["http://127.0.0.1:8765/"]
+
+
+def test_ctrl_c_stops_only_the_viewer(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    def boom(run_id: Any, host: str, port: int) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(web_mod, "serve", boom)
+    assert web(None, open_browser=False) == 0
+    assert "viewer stopped" in capsys.readouterr().out
+
+
+def test_the_web_command_is_registered(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+    app = typer.Typer()
+    register(app)
+    assert CliRunner().invoke(app, ["--no-open"]).exit_code == 2

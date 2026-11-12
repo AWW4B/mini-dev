@@ -9,6 +9,7 @@
 #   - imports from src/asf/m5_shared/gateway/providers.py: RouteConfig, build_chat_model (construction)
 #   - imports from src/asf/m5_shared/gateway/usage_callback.py: UsageCallbackHandler (accounting)
 #   - imports from src/asf/contracts/errors.py: BudgetExceeded, ProviderUnavailable (error types)
+#   - imports from src/asf/config/loader.py: load_layered (the layered models.toml)
 #   - called by src/asf/m5_shared/context/compaction.py: ModelGateway
 #   - called by src/asf/m2_request/prompt_normalisation.py: ModelGateway
 #   - called by src/asf/m2_request/request_understanding.py: ModelGateway
@@ -23,6 +24,7 @@
 #   - called by tests/m5_shared/gateway/test_gateway.py: ModelGateway
 #   - called by src/asf/m4_execution/worker/worker_graph.py: ModelGateway
 #   - called by src/asf/m3_orchestration/run_graph.py: ModelGateway
+#   - called by src/asf/cli/commands/run.py: ModelGateway
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -38,12 +40,11 @@
 # DONE WHEN: (1) tests/m5_shared/gateway/test_gateway.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/gateway/gateway.py` and `uv run mypy src/asf/m5_shared/gateway/gateway.py` are clean.
 
 import logging
-import tomllib
-from pathlib import Path
 from typing import Any
 
 from langchain_core.runnables import Runnable
 
+from asf.config.loader import load_layered
 from asf.contracts.budget import RunBudget
 from asf.contracts.errors import BudgetExceeded, ProviderUnavailable
 from asf.contracts.models import ModelRole
@@ -67,15 +68,7 @@ class ModelGateway:
         self._load_config()
 
     def _load_config(self) -> None:
-        cfg_path = Path(__file__).resolve().parents[2] / "config" / "defaults" / "models.toml"
-        data: dict[str, Any] = {}
-        if cfg_path.is_file():
-            try:
-                with open(cfg_path, "rb") as fh:
-                    data = tomllib.load(fh)
-            except (OSError, tomllib.TOMLDecodeError):
-                logger.warning("could not read the model profile file %s; using the built-in profile", cfg_path, exc_info=True)
-                data = {}
+        data: dict[str, Any] = load_layered("models")  # packaged defaults, then the user's models.toml, then FACTORY_* variables
 
         profiles = data.get("profiles", {})
         profile_data = profiles.get(self.profile_name, {})

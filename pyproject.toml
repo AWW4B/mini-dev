@@ -63,6 +63,7 @@ ignore = ["S101", "E501"]  # long header comment lines; the formatter wraps code
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*" = ["S603"]
+"src/asf/cli/commands/*" = ["B008"]  # typer declares options as parameter defaults
 "tests/scripts/*" = ["S603"]
 "tests/web/*" = ["S104"]  # the bind-refusal test lists forbidden addresses on purpose
 

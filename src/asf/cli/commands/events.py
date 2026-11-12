@@ -7,6 +7,7 @@
 #   - imports from src/asf/m5_shared/events/event_log.py: EventLog (events)
 #   - imports from src/asf/m5_shared/metrics/collector.py: MetricsCollector (CSV tables)
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
+#   - imports from src/asf/cli/context.py: EXIT_OK, EXIT_USER, guard, open_store, renderer_for, resolve_run_id (shared CLI plumbing)
 #   - called by src/asf/cli/app.py: register
 #   - called by tests/cli/commands/test_events.py: events_export, register
 #   - emits/consumes: none
@@ -25,15 +26,71 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/cli/commands/test_events.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/cli/commands/events.py` and `uv run mypy src/asf/cli/commands/events.py` are clean.
 
+import json
 from pathlib import Path
 
 import typer
 
+from asf.cli.context import EXIT_OK, EXIT_USER, guard, open_store, renderer_for, resolve_run_id
+from asf.m5_shared.events.event_log import EventLog
+from asf.m5_shared.metrics.collector import MetricsCollector
+
+_OTEL = {
+    "model": "gen_ai.request.model",
+    "provider": "gen_ai.system",
+    "tokens_in": "gen_ai.usage.input_tokens",
+    "tokens_out": "gen_ai.usage.output_tokens",
+    "tool": "gen_ai.tool.name",
+}
+
+
+def _otel_attributes(payload: dict[str, object]) -> dict[str, object]:
+    """Map our payload keys onto the OpenTelemetry GenAI attribute names where they exist."""
+    return {_OTEL[k]: v for k, v in payload.items() if k in _OTEL}
+
 
 def events_export(run_id: str, dest: Path, fmt: str = "jsonl") -> int:
-    raise NotImplementedError
+    """Export a run: JSONL (one event per line, with OTel GenAI attributes) or CSV tables (calls, tools, limits)."""
+    renderer = renderer_for("plain")
+    if fmt not in ("jsonl", "csv"):
+        renderer.message(f"Unknown format '{fmt}'. Use jsonl or csv.", "error")
+        return EXIT_USER
+    store = open_store(readonly=True)
+    try:
+        chosen = resolve_run_id(store, run_id or None)
+        if fmt == "csv":
+            files = MetricsCollector(store).export_csv(chosen, dest)
+            renderer.message(f"Wrote {len(files)} CSV file(s) to {dest}", "success")
+            return EXIT_OK
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        log, cursor, count = EventLog(store.conn), 0, 0
+        with dest.open("w", encoding="utf-8", newline="\n") as handle:
+            while True:
+                batch = log.read(chosen, after_seq=cursor, limit=500)
+                if not batch:
+                    break
+                for event in batch:
+                    cursor = max(cursor, event.seq)
+                    record = event.model_dump(mode="json")
+                    record["attributes"] = _otel_attributes(event.payload)
+                    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    count += 1
+    finally:
+        store.close()
+    renderer.message(f"Wrote {count} event(s) to {dest}", "success")
+    return EXIT_OK
 
 
 def register(app: typer.Typer) -> None:
     """Attach the `events` command(s) to the root Typer app."""
-    raise NotImplementedError
+    group = typer.Typer(help="Export a run's events.", no_args_is_help=True)
+
+    @group.command("export")
+    def export_cmd(
+        dest: Path,
+        run_id: str = typer.Argument("", help="Run id (default: the latest run)"),
+        fmt: str = typer.Option("jsonl", "--format", help="jsonl | csv"),
+    ) -> None:
+        raise typer.Exit(code=guard(lambda: events_export(run_id, dest, fmt)))
+
+    app.add_typer(group, name="events")

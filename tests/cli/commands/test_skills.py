@@ -17,18 +17,31 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/cli/commands/test_skills.py` on Windows and Linux once src/asf/cli/commands/skills.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/cli/commands/test_skills.py` and `uv run mypy tests/cli/commands/test_skills.py` are clean.
 
+import json
+from pathlib import Path
 
-from asf.cli.commands.skills import register, skills_list, skills_validate  # noqa: F401
+import pytest
+import typer
+from typer.testing import CliRunner
+
+from asf.cli.commands.skills import register, skills_list, skills_validate
 
 
-def test_skills_list_meets_contract() -> None:
-    """Prove skills_list behaves as declared in src/asf/cli/commands/skills.py."""
-    raise NotImplementedError("write this test before implementing skills_list")
+def test_list_shows_the_project_skills(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path))
+    assert skills_list("json") == 0
+    names = [row["name"] for row in json.loads(capsys.readouterr().out)["rows"]]
+    assert {"split-proposal", "write-tests-from-acceptance", "request-structuring"} <= set(names)
 
-def test_skills_validate_meets_contract() -> None:
-    """Prove skills_validate behaves as declared in src/asf/cli/commands/skills.py."""
-    raise NotImplementedError("write this test before implementing skills_validate")
 
-def test_register_meets_contract() -> None:
-    """Prove register behaves as declared in src/asf/cli/commands/skills.py."""
-    raise NotImplementedError("write this test before implementing register")
+def test_validate_reports_problems_as_a_user_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path))
+    code = skills_validate()
+    out = capsys.readouterr()
+    assert code in (0, 1) and (("valid" in out.out) if code == 0 else ("Skill" in out.err))
+
+
+def test_the_skills_group_is_registered() -> None:
+    app = typer.Typer()
+    register(app)
+    assert CliRunner().invoke(app, ["skills", "--help"]).exit_code == 0

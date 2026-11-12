@@ -6,6 +6,7 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/config/settings.py: load_settings (settings)
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
+#   - imports from src/asf/cli/context.py: EXIT_OK, EXIT_USER, guard, project_root, renderer_for (shared CLI plumbing)
 #   - called by src/asf/cli/app.py: register
 #   - called by tests/cli/commands/test_config_cmd.py: config_show, config_validate, register
 #   - emits/consumes: none
@@ -23,15 +24,39 @@
 
 import typer
 
+from asf.cli.context import EXIT_OK, EXIT_USER, guard, project_root, renderer_for
+from asf.config.settings import load_settings
+
 
 def config_show(output: str = "rich") -> int:
-    raise NotImplementedError
+    """The effective settings: packaged defaults, user file, project file, FACTORY_* variables."""
+    settings = load_settings(project_root())
+    data = settings.model_dump()
+    flat = {k: (", ".join(f"{a}={b}" for a, b in v.items()) if isinstance(v, dict) else v) for k, v in data.items()}
+    renderer_for(output).record("Effective settings", flat)
+    return EXIT_OK
 
 
 def config_validate() -> int:
-    raise NotImplementedError
+    try:
+        load_settings(project_root())
+    except Exception as err:  # noqa: BLE001 - pydantic and the loader raise different types; all mean "invalid"
+        renderer_for("plain").message(f"The configuration is invalid: {err}", "error")
+        return EXIT_USER
+    renderer_for("plain").message("The configuration is valid.", "success")
+    return EXIT_OK
 
 
 def register(app: typer.Typer) -> None:
     """Attach the `config` command(s) to the root Typer app."""
-    raise NotImplementedError
+    group = typer.Typer(help="Show and check the configuration.", no_args_is_help=True)
+
+    @group.command("show")
+    def show_cmd(output: str = typer.Option("rich", "--output", "-o")) -> None:
+        raise typer.Exit(code=guard(lambda: config_show(output)))
+
+    @group.command("validate")
+    def validate_cmd() -> None:
+        raise typer.Exit(code=guard(config_validate))
+
+    app.add_typer(group, name="config")

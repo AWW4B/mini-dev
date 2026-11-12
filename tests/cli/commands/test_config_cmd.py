@@ -17,18 +17,44 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/cli/commands/test_config_cmd.py` on Windows and Linux once src/asf/cli/commands/config_cmd.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/cli/commands/test_config_cmd.py` and `uv run mypy tests/cli/commands/test_config_cmd.py` are clean.
 
+import json
+from pathlib import Path
 
-from asf.cli.commands.config_cmd import config_show, config_validate, register  # noqa: F401
+import pytest
+import typer
+from typer.testing import CliRunner
+
+from asf.cli.commands.config_cmd import config_show, config_validate, register
 
 
-def test_config_show_meets_contract() -> None:
-    """Prove config_show behaves as declared in src/asf/cli/commands/config_cmd.py."""
-    raise NotImplementedError("write this test before implementing config_show")
+def test_show_prints_the_effective_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path))
+    assert config_show("json") == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["profile"] == "hybrid" and "web" in data
 
-def test_config_validate_meets_contract() -> None:
-    """Prove config_validate behaves as declared in src/asf/cli/commands/config_cmd.py."""
-    raise NotImplementedError("write this test before implementing config_validate")
 
-def test_register_meets_contract() -> None:
-    """Prove register behaves as declared in src/asf/cli/commands/config_cmd.py."""
-    raise NotImplementedError("write this test before implementing register")
+def test_environment_variables_override_the_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path))
+    monkeypatch.setenv("FACTORY_PROFILE", "local-only")
+    config_show("json")
+    assert json.loads(capsys.readouterr().out)["data"]["profile"] == "local-only"
+
+
+def test_validate_accepts_the_defaults_and_rejects_a_broken_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path))
+    assert config_validate() == 0
+    config = tmp_path / "config"
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "factory.toml").write_text("not = = toml [", encoding="utf-8")
+    capsys.readouterr()
+    assert config_validate() == 1
+    assert "invalid" in capsys.readouterr().err
+
+
+def test_an_unknown_output_mode_is_a_user_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path))
+    app = typer.Typer()
+    register(app)
+    result = CliRunner().invoke(app, ["config", "show", "--output", "fancy"])
+    assert result.exit_code == 1

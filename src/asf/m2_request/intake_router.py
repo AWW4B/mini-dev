@@ -63,6 +63,10 @@ def submit(
     request: SubmitRequest,
     state_store: StateStore | None = None,
     graph: Any = None,
+    *,
+    gateway: Any = None,
+    skills: Any = None,
+    decision_broker: Any = None,
 ) -> StructuredRequest:
     """IF-01 in, IF-02 out (runs the M2 graph to completion or to a HITL interrupt)."""
     if not isinstance(request, SubmitRequest):
@@ -134,6 +138,9 @@ def submit(
     runtime: dict[str, Any] = {"thread_id": request_id}
     if state_store is not None:
         runtime["state_store"] = state_store  # live objects go in the config, not the checkpointed state
+    for name, value in (("gateway", gateway), ("skills", skills), ("decision_broker", decision_broker)):
+        if value is not None:
+            runtime[name] = value
     output = graph.invoke(initial_state, {"configurable": runtime})
 
     if isinstance(output, StructuredRequest):

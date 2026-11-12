@@ -9,6 +9,7 @@
 #   - called by src/asf/cli/commands/config_cmd.py: load_settings
 #   - called by src/asf/web/server.py: load_settings
 #   - called by tests/config/test_settings.py: WebSettings, FactorySettings, load_settings
+#   - called by src/asf/cli/commands/models.py: load_settings
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

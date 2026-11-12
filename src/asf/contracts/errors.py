@@ -37,6 +37,8 @@
 #   - called by src/asf/cli/project_input.py: ConfigError
 #   - called by src/asf/cli/run_controls.py: ConfigError
 #   - called by src/asf/cli/context.py: ConfigError
+#   - called by src/asf/cli/commands/project.py: ConfigError
+#   - called by src/asf/cli/commands/run.py: ConfigError
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

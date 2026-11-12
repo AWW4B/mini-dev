@@ -52,7 +52,7 @@ def test_the_project_is_the_current_directory(tmp_path: Path, monkeypatch: pytes
 def test_a_missing_project_is_a_config_error_that_names_the_fix(tmp_path: Path) -> None:
     with pytest.raises(Exception) as info:  # noqa: PT011 - ConfigError lives in contracts, which this test does not import
         open_store(root=tmp_path)
-    assert type(info.value).__name__ == "ConfigError" and "factory init" in str(info.value)
+    assert type(info.value).__name__ == "NoProjectError" and "factory init" in str(info.value)
 
 
 def test_the_store_can_be_opened_read_only_and_cannot_write(tmp_path: Path) -> None:
