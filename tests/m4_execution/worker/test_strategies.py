@@ -80,8 +80,8 @@ def _run(name: WorkerStrategyName, gateway: _Gateway, executor: _Executor, tmp_p
 
 def test_tool_loop_calls_tools_until_the_model_says_done(tmp_path: Path) -> None:
     gateway = _Gateway(
-        {"action": "tool", "tool": "read_file", "args": {"path": "src/billing.py"}},
-        {"action": "tool", "tool": "write_file", "args": {"path": "src/billing.py", "content": "x = 1"}},
+        {"action": "tool", "tool": "read_file", "args": {"rel_path": "src/billing.py"}},
+        {"action": "tool", "tool": "write_file", "args": {"rel_path": "src/billing.py", "content": "x = 1"}},
         {"action": "done", "message": "implemented"},
     )
     executor = _Executor()
@@ -112,7 +112,7 @@ def test_blocked_is_surfaced_to_the_orchestrator(tmp_path: Path) -> None:
 
 
 def test_the_turn_budget_is_enforced(tmp_path: Path) -> None:
-    gateway = _Gateway(*[{"action": "tool", "tool": "list_files", "args": {"path": "."}}] * 3)
+    gateway = _Gateway(*[{"action": "tool", "tool": "search_code", "args": {"pattern": "charge"}}] * 3)
     with pytest.raises(WorkerBlocked) as info:
         _run("tool_loop", gateway, _Executor(), tmp_path, _spec(max_turns=3))
     assert "SPEC_TOO_LARGE" in str(info.value)
@@ -130,7 +130,7 @@ def test_whole_file_edit_writes_every_file_through_the_tool_executor(tmp_path: P
     executor = _Executor()
     report = _run("whole_file_edit", gateway, executor, tmp_path)
     assert "1 file" in report
-    assert executor.calls == [("write_file", {"path": "src/billing.py", "content": "def charge(): ...\n"})]
+    assert executor.calls == [("write_file", {"rel_path": "src/billing.py", "content": "def charge(): ...\n"})]
 
 
 def test_whole_file_edit_fails_when_the_executor_denies_the_write(tmp_path: Path) -> None:

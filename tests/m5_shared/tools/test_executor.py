@@ -6,6 +6,8 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/m5_shared/tools/executor.py: ToolExecutor (unit under test)
 #   - imports from tests/conftest.py: fake_paths (shared fixtures)
+#   - imports from src/asf/m5_shared/tools/builtin_tools.py: register_builtin_tools (the real tools behind the executor)
+#   - imports from src/asf/m5_shared/tools/registry.py: ToolRegistry (the real registry)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -19,6 +21,7 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/tools/test_executor.py` on Windows and Linux once src/asf/m5_shared/tools/executor.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/tools/test_executor.py` and `uv run mypy tests/m5_shared/tools/test_executor.py` are clean.
 
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -112,3 +115,84 @@ def test_tool_executor_meets_contract(tmp_path: Any) -> None:
     # Run the wrapped tool
     out = wrapped[0].invoke({"a": 4, "b": 6})
     assert "10" in str(out)
+
+
+def _spec(name: str, **over: Any) -> Any:
+    return SimpleNamespace(
+        name=name, description=name, args_schema={}, destructive=over.get("destructive", False), needs_network=False,
+        roles=["worker"], source="builtin",
+    )
+
+
+def _inv(tool: str, workspace: Any, **args: Any) -> Any:
+    return SimpleNamespace(tool=tool, args=args, role="worker", workspace_dir=str(workspace), task_id="task-1")
+
+
+class _ApprovalPolicy:
+    def check(self, invocation: Any, spec: Any, tier: Any, allowed_files: list[str]) -> Any:
+        return SimpleNamespace(verdict=SimpleNamespace(value="needs_approval"), reason="destructive")
+
+
+def test_the_workspace_root_is_injected_by_the_platform_not_chosen_by_the_agent(tmp_path: Path) -> None:
+    reg = FakeRegistry()
+    seen: list[Path] = []
+
+    def read_file(root: Path, rel_path: str) -> str:
+        seen.append(root)
+        return (root / rel_path).read_text(encoding="utf-8")
+
+    reg.register(_spec("read_file"), read_file)
+    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+    executor = ToolExecutor(registry=reg, policy=FakePolicy(), tier="A")  # type: ignore[arg-type]
+
+    result = executor.invoke(_inv("read_file", tmp_path, rel_path="a.txt", root="/etc"), allowed_files=[])
+
+    assert result.status == "ok" and result.output == "hello"
+    assert seen == [tmp_path]
+
+
+def test_a_tool_that_needs_approval_is_not_run_and_a_decision_is_requested(tmp_path: Path) -> None:
+    reg = FakeRegistry()
+    ran: list[str] = []
+    reg.register(_spec("delete_everything", destructive=True), lambda: ran.append("ran"))
+
+    class _Broker:
+        def __init__(self) -> None:
+            self.requests: list[Any] = []
+
+        def request(self, req: Any) -> None:
+            self.requests.append(req)
+
+    broker = _Broker()
+    executor = ToolExecutor(registry=reg, policy=_ApprovalPolicy(), broker=broker, tier="A")  # type: ignore[arg-type]
+
+    result = executor.invoke(_inv("delete_everything", tmp_path), allowed_files=[])
+
+    assert ran == []
+    assert result.status == "denied" and "Approval requested" in result.output
+    (req,) = broker.requests
+    assert req.kind.value == "tool_permission" and req.default_on_timeout == "deny"
+    assert req.options == ["allow_once", "deny"]
+
+
+def test_a_tool_that_needs_approval_without_a_broker_is_denied(tmp_path: Path) -> None:
+    reg = FakeRegistry()
+    ran: list[str] = []
+    reg.register(_spec("delete_everything", destructive=True), lambda: ran.append("ran"))
+    executor = ToolExecutor(registry=reg, policy=_ApprovalPolicy(), tier="A")  # type: ignore[arg-type]
+    result = executor.invoke(_inv("delete_everything", tmp_path), allowed_files=[])
+    assert ran == [] and result.status == "denied"
+
+
+def test_the_builtin_tools_work_end_to_end_through_the_executor(tmp_path: Path) -> None:
+    from asf.m5_shared.tools.builtin_tools import register_builtin_tools
+    from asf.m5_shared.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    executor = ToolExecutor(registry=registry, policy=FakePolicy(), tier="A")  # type: ignore[arg-type]
+
+    wrote = executor.invoke(_inv("write_file", tmp_path, rel_path="src/x.py", content="a = 1\n"), allowed_files=[])
+    read = executor.invoke(_inv("read_file", tmp_path, rel_path="src/x.py"), allowed_files=[])
+    assert wrote.status == "ok", wrote.output
+    assert read.status == "ok" and read.output == "a = 1\n"

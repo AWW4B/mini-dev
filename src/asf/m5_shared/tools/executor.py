@@ -12,6 +12,7 @@
 #   - imports from src/asf/m5_shared/events/redaction.py: redact_text (redaction)
 #   - imports from src/asf/platform/select.py: get_platform (platform adapter)
 #   - imports from src/asf/contracts/errors.py: PolicyDenied, ApprovalRequired, SandboxUnavailable (error types)
+#   - imports from src/asf/contracts/decisions.py: DecisionRequest (TOOL_PERMISSION requests)
 #   - called by src/asf/m5_shared/tools/codeexec/runner.py: ToolExecutor
 #   - called by src/asf/m4_execution/worker/strategies.py: ToolExecutor
 #   - called by tests/m5_shared/tools/test_executor.py: ToolExecutor
@@ -31,13 +32,16 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/tools/test_executor.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/tools/executor.py` and `uv run mypy src/asf/m5_shared/tools/executor.py` are clean.
 
+import inspect
 import logging
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from langchain_core.tools import BaseTool
 
+from asf.contracts.decisions import DecisionRequest
 from asf.contracts.errors import ApprovalRequired, PolicyDenied, SandboxUnavailable  # noqa: F401
 from asf.contracts.tools import SandboxTier, ToolInvocation, ToolResult
 from asf.m5_shared.decisions.broker import DecisionBroker
@@ -146,19 +150,42 @@ class ToolExecutor:
             )
 
         if verdict_str == Verdict.NEEDS_APPROVAL.value:
+            # The tool is NOT run: the user is asked through the DecisionBroker (TOOL_PERMISSION is never auto-approved)
+            # and the agent gets a denial it can react to; it may call the tool again once the decision is granted.
+            duration = int((time.monotonic() - t0) * 1000)
             if self.broker is None:
-                duration = int((time.monotonic() - t0) * 1000)
-                return ToolResult(
-                    tool=invocation.tool,
-                    status="denied",
-                    exit_code=1,
-                    output=f"Approval required but no DecisionBroker available: {verdict_obj.reason}",
-                    duration_ms=duration,
-                    sandbox_tier=active_tier,
+                output = f"Approval required but no DecisionBroker available: {verdict_obj.reason}"
+            else:
+                decision_id = f"dec-tool-{invocation.task_id or 'adhoc'}-{invocation.tool}"
+                self.broker.request(
+                    DecisionRequest.model_validate(
+                        {
+                            "decision_id": decision_id,
+                            "run_id": str(invocation.task_id or "adhoc"),
+                            "task_id": invocation.task_id,
+                            "kind": "tool_permission",
+                            "requester": "asf.m5_shared.tools.executor",
+                            "question": f"Allow the agent to run '{invocation.tool}'? {verdict_obj.reason}",
+                            "options": ["allow_once", "deny"],
+                            "default_on_timeout": "deny",
+                        }
+                    )
                 )
+                output = f"Approval requested ({decision_id}); the tool was not run: {verdict_obj.reason}"
+            return ToolResult(
+                tool=invocation.tool,
+                status="denied",
+                exit_code=1,
+                output=output,
+                duration_ms=duration,
+                sandbox_tier=active_tier,
+            )
 
         try:
-            raw_res = fn(**invocation.args)
+            call_args = dict(invocation.args)
+            if "root" in inspect.signature(fn).parameters:
+                call_args["root"] = Path(invocation.workspace_dir)  # the workspace is chosen by the platform, never by the agent
+            raw_res = fn(**call_args)
             status = "ok"
             exit_code = 0
         except Exception as err:  # noqa: BLE001 - any tool failure becomes an error result for the agent
