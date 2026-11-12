@@ -31,6 +31,8 @@
 #   - called by tests/m5_shared/state_store/test_recovery.py: StateStore
 #   - called by tests/m4_execution/integration/test_integrator.py: StateStore
 #   - called by tests/m3_orchestration/decomposition/test_frontier.py: StateStore
+#   - called by tests/m3_orchestration/test_run_control.py: StateStore
+#   - called by tests/m3_orchestration/test_run_graph.py: StateStore
 #   - emits/consumes: writes outbox rows holding EventEnvelope (IF-17) in the same transaction as each mutation
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

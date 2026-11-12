@@ -17,6 +17,7 @@
 #   - called by src/asf/m3_orchestration/planning/planner_graph.py: DecisionBroker
 #   - called by src/asf/cli/commands/inbox.py: DecisionBroker
 #   - called by tests/m5_shared/decisions/test_broker.py: DecisionBroker
+#   - called by tests/m3_orchestration/test_run_graph.py: DecisionBroker
 #   - emits/consumes: emits DECISION_NEEDED and DECISION_RESOLVED events (EventEnvelope) through StateStore.commit
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

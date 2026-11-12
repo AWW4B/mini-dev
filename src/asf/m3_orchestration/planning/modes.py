@@ -7,6 +7,7 @@
 #   - imports from src/asf/contracts/requests.py: StructuredRequest, TaskType (input)
 #   - called by src/asf/m3_orchestration/planning/planner_graph.py: select_mode
 #   - called by tests/m3_orchestration/planning/test_modes.py: PlanMode, select_mode
+#   - called by src/asf/m3_orchestration/run_graph.py: select_mode
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

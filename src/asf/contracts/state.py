@@ -10,6 +10,8 @@
 #   - called by src/asf/m5_shared/state_store/recovery.py: StateCommit
 #   - called by src/asf/m4_execution/integration/integrator.py: StateCommit
 #   - called by src/asf/m3_orchestration/decomposition/frontier.py: StateCommit
+#   - called by src/asf/m3_orchestration/run_control.py: StateCommit
+#   - called by src/asf/m3_orchestration/run_graph.py: StateCommit
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

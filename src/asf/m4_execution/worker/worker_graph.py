@@ -18,6 +18,7 @@
 #   - imports from src/asf/m5_shared/tools/executor.py: ToolExecutor (strategy tool calls)
 #   - called by src/asf/m4_execution/scheduler.py: run_attempt
 #   - called by tests/m4_execution/worker/test_worker_graph.py: run_attempt, WorkerError
+#   - called by src/asf/m3_orchestration/run_graph.py: run_attempt
 #   - emits/consumes: emits TASK_RECEIVED, STEP_STARTED, HANDOFF_SENT (worker -> gate); tool events come from ToolExecutor
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

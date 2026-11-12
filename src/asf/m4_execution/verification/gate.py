@@ -16,6 +16,7 @@
 #   - imports from src/asf/platform/base.py: ProcessResult, SandboxSpec (sandboxed gate commands)
 #   - called by src/asf/m4_execution/worker/worker_graph.py: verify_change_set
 #   - called by tests/m4_execution/verification/test_gate.py: verify_change_set, scan_diff
+#   - called by src/asf/m3_orchestration/run_graph.py: verify_change_set, run_in_sandbox
 #   - emits/consumes: emits GATE_RESULT (gate, passed, summary, evidence_ref) per gate, HANDOFF_SENT (gate -> scheduler on requeue), STATE_CHANGED VERIFIED
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -103,6 +104,9 @@ def _sandbox_runner(argv: list[str], cwd: Path, timeout_s: int) -> ProcessResult
         return backend.run(spec)
     except OSError as err:
         return ProcessResult(exit_code=127, stdout=b"", stderr=f"command not found or not runnable: {err}".encode(), timed_out=False, duration_ms=0)
+
+
+run_in_sandbox = _sandbox_runner  # public name: the integration tests run through the same sandbox
 
 
 def _log_of(result: ProcessResult) -> str:
