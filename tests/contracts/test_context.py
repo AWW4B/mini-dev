@@ -18,21 +18,70 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/contracts/test_context.py` on Windows and Linux once src/asf/contracts/context.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/contracts/test_context.py` and `uv run mypy tests/contracts/test_context.py` are clean.
 
 
-from asf.contracts.context import ContextItem, ContextPack, ContextRequest, ContextTier  # noqa: F401
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from asf.contracts.context import ContextItem, ContextPack, ContextRequest, ContextTier
 
 
-def test_context_tier_meets_contract() -> None:
-    """Prove ContextTier behaves as declared in src/asf/contracts/context.py."""
-    raise NotImplementedError("write this test before implementing ContextTier")
+def _item(tier: int = 0) -> dict[str, Any]:
+    return {"tier": tier, "source_ref": "spec#1", "sha256": "ab" * 32, "tokens": 12, "text": "hello"}
 
-def test_context_request_meets_contract() -> None:
-    """Prove ContextRequest behaves as declared in src/asf/contracts/context.py."""
-    raise NotImplementedError("write this test before implementing ContextRequest")
 
-def test_context_item_meets_contract() -> None:
-    """Prove ContextItem behaves as declared in src/asf/contracts/context.py."""
-    raise NotImplementedError("write this test before implementing ContextItem")
+def _pack(items: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {
+        "pack_id": "pack_1",
+        "task_id": "task_1",
+        "role": "worker",
+        "budget_tokens": 4000,
+        "token_count": 12,
+        "items": items if items is not None else [_item()],
+    }
 
-def test_context_pack_meets_contract() -> None:
-    """Prove ContextPack behaves as declared in src/asf/contracts/context.py."""
-    raise NotImplementedError("write this test before implementing ContextPack")
+
+def test_tiers_are_ordered_from_spec_to_failure() -> None:
+    assert [int(t) for t in ContextTier] == [0, 1, 2, 3, 4, 5]
+    assert ContextTier.P0_SPEC < ContextTier.P1_CAPSULES < ContextTier.P5_FAILURE
+    assert ContextTier(2) is ContextTier.P2_ALLOWED_FILES
+
+
+def test_request_requires_budget_and_model() -> None:
+    req = ContextRequest.model_validate({"task_id": "t", "role": "worker", "budget_tokens": 100, "model_id": "m"})
+    assert req.budget_tokens == 100
+    with pytest.raises(ValidationError):
+        ContextRequest.model_validate({"task_id": "t", "role": "worker", "budget_tokens": 100})
+
+
+def test_item_converts_int_tier_and_rejects_unknown_tier() -> None:
+    assert ContextItem.model_validate(_item(3)).tier is ContextTier.P3_SNIPPETS
+    with pytest.raises(ValidationError):
+        ContextItem.model_validate(_item(9))
+
+
+def test_pack_defaults_report_nothing_dropped_and_measured_tokens() -> None:
+    pack = ContextPack.model_validate(_pack())
+    assert pack.dropped == []
+    assert pack.token_count_estimated is False
+
+
+def test_pack_default_lists_are_not_shared_between_instances() -> None:
+    a = ContextPack.model_validate(_pack())
+    b = ContextPack.model_validate(_pack())
+    a.dropped.append("p3:snippet")
+    assert b.dropped == []
+
+
+def test_pack_rejects_a_malformed_item() -> None:
+    bad = _item()
+    del bad["text"]
+    with pytest.raises(ValidationError):
+        ContextPack.model_validate(_pack([bad]))
+
+
+def test_pack_json_round_trip_keeps_tier_enum() -> None:
+    pack = ContextPack.model_validate(_pack([_item(0), _item(4)]))
+    again = ContextPack.model_validate_json(pack.model_dump_json())
+    assert again == pack
+    assert again.items[1].tier is ContextTier.P4_DECISIONS
