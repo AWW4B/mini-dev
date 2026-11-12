@@ -39,7 +39,6 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/cli/test_app.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/cli/app.py` and `uv run mypy src/asf/cli/app.py` are clean.
 
-import logging
 import sys
 
 import typer
@@ -64,8 +63,6 @@ import asf.cli.commands.web as web
 from asf.cli.flows import main_menu
 from asf.logging_setup import configure_logging
 
-_LOGGER = logging.getLogger(__name__)
-
 app = typer.Typer(name="factory", no_args_is_help=False, add_completion=False)
 
 _COMMAND_MODULES = (
@@ -87,30 +84,18 @@ _COMMAND_MODULES = (
     mcp,
     web,
 )
-
 for _mod in _COMMAND_MODULES:
-    try:
-        _mod.register(app)
-    except (NotImplementedError, Exception) as exc:  # noqa: BLE001
-        _LOGGER.debug("Skipping unconfigured command registration for %s: %s", getattr(_mod, "__name__", _mod), exc)
+    _mod.register(app)
 
 
 @app.callback(invoke_without_command=True)
 def _root_callback(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
         if sys.stdin.isatty() and sys.stdout.isatty():
-            try:
-                main_menu()
-            except (NotImplementedError, Exception) as exc:  # noqa: BLE001
-                _LOGGER.debug("Main menu flow unavailable: %s", exc)
-                print("Welcome to AI Software Factory (CLI)")
-        else:
-            raise typer.Exit(code=2)
+            raise typer.Exit(code=main_menu())
+        raise typer.Exit(code=2)  # nothing to do without a terminal: `factory --help` lists the commands
 
 
 def main() -> None:
-    try:
-        configure_logging()
-    except (NotImplementedError, Exception) as exc:  # noqa: BLE001
-        _LOGGER.debug("Logging configuration unavailable: %s", exc)
+    configure_logging()
     app()

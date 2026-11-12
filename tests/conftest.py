@@ -5,6 +5,7 @@
 # DOES NOT OWN: Module-specific test cases
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/config/paths.py: AppPaths (isolated directories)
+#   - imports from src/asf/m5_shared/state_store/store.py: StateStore (the cli_project fixture opens a real store)
 #   - called by tests/m5_shared/state_store/test_schema.py: fake_paths
 #   - called by tests/m5_shared/state_store/test_store.py: fake_paths
 #   - called by tests/m5_shared/state_store/test_recovery.py: fake_paths
@@ -52,6 +53,13 @@
 #   - called by tests/scripts/test_gen_notice.py: fake_paths
 #   - called by tests/scripts/test_export_requirements.py: fake_paths
 #   - called by tests/scripts/test_smoke.py: fake_paths
+#   - called by tests/cli/commands/test_inbox.py: cli_project
+#   - called by tests/cli/commands/test_history.py: cli_project
+#   - called by tests/cli/commands/test_stats.py: cli_project
+#   - called by tests/cli/commands/test_tasks.py: cli_project
+#   - called by tests/cli/commands/test_trace.py: cli_project
+#   - called by tests/cli/commands/test_dash.py: cli_project
+#   - called by tests/cli/test_flows.py: cli_project
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -67,6 +75,7 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for this file. (2) `uv run ruff check tests/conftest.py` and `uv run mypy tests/conftest.py` are clean.
 
+import json
 import os
 import sys
 from collections.abc import Generator, Iterator
@@ -75,6 +84,7 @@ from pathlib import Path
 import pytest
 
 from asf.config.paths import AppPaths
+from asf.m5_shared.state_store.store import StateStore
 
 OPT_IN_MARKERS = ("needs_gpu", "needs_sandbox", "needs_network")
 PLACEHOLDER_PREFIX = "write this test"
@@ -105,6 +115,53 @@ def fake_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[AppP
 @pytest.fixture
 def fake_clock() -> FakeClock:
     return FakeClock()
+
+
+class CliProject:
+    """A project directory with an open state store and helpers that insert rows the CLI commands read."""
+
+    def __init__(self, root: Path, store: StateStore) -> None:
+        self.root = root
+        self.store = store
+
+    def add_run(self, run_id: str = "run1", status: str = "RUNNING", cost: float = 0.0, estimated: bool = False, activity: str = "2026-11-12") -> None:
+        with self.store.conn:
+            self.store.conn.execute(
+                "INSERT INTO runs (run_id, project_id, status, version, created_at, last_activity, cost, cost_estimated, payload) "
+                "VALUES (?, 'proj', ?, 1, 't', ?, ?, ?, '{}')",
+                (run_id, status, activity, cost, int(estimated)),
+            )
+
+    def add_task(self, task_id: str, parent: str | None = None, state: str = "READY", run_id: str = "run1", **counters: int) -> None:
+        payload = {
+            "id": task_id, "run_id": run_id, "parent_id": parent, "kind": "composite", "goal": f"goal of {task_id}", "idempotency_key": task_id,
+            "state": state, "counters": counters, "allowed_files": [f"src/{task_id}.py"], "deps": [],
+        }
+        with self.store.conn:
+            self.store.conn.execute(
+                "INSERT INTO tasks (task_id, run_id, parent_id, state, kind, version, title, payload) VALUES (?, ?, ?, ?, 'composite', 1, 'g', ?)",
+                (task_id, run_id, parent, state, json.dumps(payload)),
+            )
+
+    def add_call(self, run_id: str = "run1", role: str = "worker", model: str = "m", tokens_in: int = 100, tokens_out: int = 50, cost: float = 0.1, strategy: str = "tool_loop", estimated: int = 0) -> None:
+        with self.store.conn:
+            self.store.conn.execute(
+                "INSERT INTO call_metrics (run_id, provider, model, input_tokens, output_tokens, cost, duration_ms, timestamp, role, strategy, estimated) "
+                "VALUES (?, 'local', ?, ?, ?, ?, 10, 't', ?, ?, ?)",
+                (run_id, model, tokens_in, tokens_out, cost, role, strategy, estimated),
+            )
+
+
+@pytest.fixture
+def cli_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_paths: AppPaths) -> Iterator[CliProject]:
+    """The current directory is a fresh factory project (state store included) and FACTORY_HOME is isolated."""
+    _ = fake_paths
+    root = tmp_path / "proj"
+    (root / ".factory").mkdir(parents=True)
+    monkeypatch.chdir(root)
+    store = StateStore.open(root / ".factory" / "state.db")
+    yield CliProject(root, store)
+    store.close()
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

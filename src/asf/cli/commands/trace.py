@@ -6,6 +6,7 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/cli/views/trace_view.py: TraceView (rendering)
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
+#   - imports from src/asf/cli/context.py: EXIT_OK, EXIT_USER, default_output, guard, renderer_for (shared CLI plumbing)
 #   - called by src/asf/cli/app.py: register
 #   - called by tests/cli/commands/test_trace.py: trace, register
 #   - emits/consumes: none
@@ -23,11 +24,31 @@
 
 import typer
 
+from asf.cli.context import EXIT_OK, EXIT_USER, default_output, guard, renderer_for
+from asf.cli.views.trace_view import TraceView
+
 
 def trace(run_id: str | None, follow: bool = False, level: str = "user", task: str | None = None) -> int:
-    raise NotImplementedError
+    """The terminal projection of the event log; --follow keeps printing new events until Ctrl+C."""
+    renderer = renderer_for(default_output())
+    if level not in ("user", "internal"):
+        renderer.message("--level must be 'user' or 'internal'.", "error")
+        return EXIT_USER
+    view = TraceView(renderer, run_id, level=level, task=task)
+    view.render_once()
+    if follow:
+        view.live()
+    return EXIT_OK
 
 
 def register(app: typer.Typer) -> None:
     """Attach the `trace` command(s) to the root Typer app."""
-    raise NotImplementedError
+
+    @app.command("trace", help="Show what the agents did, step by step.")
+    def trace_cmd(
+        run_id: str | None = typer.Argument(None),
+        follow: bool = typer.Option(False, "--follow", "-f", help="Keep printing new events"),
+        level: str = typer.Option("user", "--level", help="user | internal"),
+        task: str | None = typer.Option(None, "--task", help="Only this task"),
+    ) -> None:
+        raise typer.Exit(code=guard(lambda: trace(run_id, follow, level, task)))

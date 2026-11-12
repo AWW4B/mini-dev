@@ -6,6 +6,7 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/web/server.py: serve (viewer)
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
+#   - imports from src/asf/cli/context.py: EXIT_ENV, EXIT_OK, guard, renderer_for (shared CLI plumbing)
 #   - called by src/asf/cli/app.py: register
 #   - called by tests/cli/commands/test_web.py: web, register
 #   - emits/consumes: none
@@ -21,14 +22,44 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/cli/commands/test_web.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/cli/commands/web.py` and `uv run mypy src/asf/cli/commands/web.py` are clean.
 
+import importlib.util
+import threading
+import webbrowser
+
 import typer
+
+from asf.cli.context import EXIT_ENV, EXIT_OK, guard, renderer_for
+from asf.web.server import ALLOWED_BIND_HOST, serve
+
+DEFAULT_PORT = 8765
 
 
 def web(run_id: str | None, port: int | None = None, open_browser: bool = True) -> int:
     """Exit 2 with an install hint when the [web] extra is missing."""
-    raise NotImplementedError
+    renderer = renderer_for("plain")
+    missing = [m for m in ("starlette", "uvicorn") if importlib.util.find_spec(m) is None]
+    if missing:
+        renderer.message(f"The web viewer needs the web extra ({', '.join(missing)} missing). Install it with: uv sync --extra web", "error")
+        return EXIT_ENV
+    chosen = port or DEFAULT_PORT
+    url = f"http://{ALLOWED_BIND_HOST}:{chosen}/"
+    renderer.message(f"Read-only viewer at {url} (Ctrl+C stops it; the run is not affected)", "success")
+    if open_browser:
+        threading.Timer(1.0, webbrowser.open, [url]).start()
+    try:
+        serve(run_id, ALLOWED_BIND_HOST, chosen)
+    except KeyboardInterrupt:
+        renderer.message("viewer stopped")
+    return EXIT_OK
 
 
 def register(app: typer.Typer) -> None:
     """Attach the `web` command(s) to the root Typer app."""
-    raise NotImplementedError
+
+    @app.command("web", help="Open the read-only web viewer (needs the web extra).")
+    def web_cmd(
+        run_id: str | None = typer.Argument(None),
+        port: int | None = typer.Option(None, "--port"),
+        open_browser: bool = typer.Option(True, "--open/--no-open", help="Open the browser"),
+    ) -> None:
+        raise typer.Exit(code=guard(lambda: web(run_id, port, open_browser)))

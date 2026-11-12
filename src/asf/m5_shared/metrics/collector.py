@@ -11,6 +11,7 @@
 #   - called by src/asf/cli/commands/events.py: MetricsCollector
 #   - called by src/asf/cli/commands/stats.py: MetricsCollector
 #   - called by tests/m5_shared/metrics/test_collector.py: MetricsCollector
+#   - called by src/asf/cli/views/dash_view.py: MetricsCollector
 #   - emits/consumes: emits USAGE and LIMIT_HIT events
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

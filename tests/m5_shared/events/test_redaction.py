@@ -100,3 +100,16 @@ def test_a_failing_payload_redaction_withholds_the_whole_payload(monkeypatch: py
     monkeypatch.setattr(redaction_mod, "_redact_value", boom)
     out = redact_payload({"note": "sk-abcdefghijklmnopqrstuvwxyz0123"})
     assert "sk-" not in str(out)
+
+
+def test_counters_with_token_in_their_name_are_not_redacted() -> None:
+    payload = {"tokens_in": 120, "tokens_out": 30, "max_tokens": 2048, "input_tokens": 1, "monkey": "banana", "keyboard": "us"}
+    assert redact_payload(payload) == payload
+
+
+def test_secret_looking_field_names_are_redacted_whatever_their_spelling() -> None:
+    payload = {"api_key": "x", "API-KEY": "x", "apiKey": "x", "access_token": "x", "Authorization": "x", "password": "x", "client_secret": "x", "nested": {"auth_token": "x", "ok": 1}}
+    out = redact_payload(payload)
+    assert out["api_key"] == out["API-KEY"] == out["access_token"] == out["Authorization"] == out["password"] == out["client_secret"] == "[REDACTED]"
+    assert out["nested"] == {"auth_token": "[REDACTED]", "ok": 1}
+    assert out["apiKey"] == "[REDACTED]"  # lower-cased, "apikey" is a secret name too

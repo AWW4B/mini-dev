@@ -6,6 +6,7 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/m5_shared/tools/skills.py: SkillsRegistry (IF-23)
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
+#   - imports from src/asf/cli/context.py: EXIT_OK, EXIT_USER, guard, renderer_for (shared CLI plumbing)
 #   - called by src/asf/cli/app.py: register
 #   - called by tests/cli/commands/test_skills.py: skills_list, skills_validate, register
 #   - emits/consumes: none
@@ -23,15 +24,41 @@
 
 import typer
 
+from asf.cli.context import EXIT_OK, EXIT_USER, guard, renderer_for
+from asf.m5_shared.tools.skills import SkillsRegistry
+
 
 def skills_list(output: str = "rich") -> int:
-    raise NotImplementedError
+    registry = SkillsRegistry()
+    manifests = sorted(registry.lookup("", "*"), key=lambda m: m.name)
+    renderer_for(output).table(
+        "Agent Skills", ["name", "version", "tools", "size", "description"],
+        [[m.name, m.version, ", ".join(m.allowed_tools) or "-", f"{m.body_chars} chars", m.description] for m in manifests],
+    )
+    return EXIT_OK
 
 
 def skills_validate() -> int:
-    raise NotImplementedError
+    problems = SkillsRegistry().validate_all()
+    renderer = renderer_for("plain")
+    if problems:
+        for problem in problems:
+            renderer.message(problem, "warning")
+        return EXIT_USER
+    renderer.message("All skills are valid.", "success")
+    return EXIT_OK
 
 
 def register(app: typer.Typer) -> None:
     """Attach the `skills` command(s) to the root Typer app."""
-    raise NotImplementedError
+    group = typer.Typer(help="List and validate Agent Skills.", no_args_is_help=True)
+
+    @group.command("list")
+    def list_cmd(output: str = typer.Option("rich", "--output", "-o")) -> None:
+        raise typer.Exit(code=guard(lambda: skills_list(output)))
+
+    @group.command("validate")
+    def validate_cmd() -> None:
+        raise typer.Exit(code=guard(skills_validate))
+
+    app.add_typer(group, name="skills")

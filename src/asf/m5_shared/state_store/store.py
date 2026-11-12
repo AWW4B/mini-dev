@@ -33,6 +33,20 @@
 #   - called by tests/m3_orchestration/decomposition/test_frontier.py: StateStore
 #   - called by tests/m3_orchestration/test_run_control.py: StateStore
 #   - called by tests/m3_orchestration/test_run_graph.py: StateStore
+#   - called by tests/cli/test_run_controls.py: StateStore
+#   - called by src/asf/cli/context.py: StateStore
+#   - called by tests/cli/test_context.py: StateStore
+#   - called by src/asf/cli/views/task_tree_view.py: StateStore
+#   - called by src/asf/cli/views/inbox_view.py: StateStore
+#   - called by src/asf/cli/views/trace_view.py: StateStore
+#   - called by src/asf/cli/views/dash_view.py: StateStore
+#   - called by tests/cli/views/test_task_tree_view.py: StateStore
+#   - called by tests/cli/views/test_inbox_view.py: StateStore
+#   - called by tests/cli/views/test_trace_view.py: StateStore
+#   - called by tests/cli/views/test_dash_view.py: StateStore
+#   - called by tests/conftest.py: StateStore
+#   - called by src/asf/cli/commands/init.py: StateStore
+#   - called by tests/cli/commands/test_project.py: StateStore
 #   - emits/consumes: writes outbox rows holding EventEnvelope (IF-17) in the same transaction as each mutation
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

@@ -4,6 +4,7 @@
 # OWNS: Interactive selection and text prompts
 # DOES NOT OWN: What the menu items do (flows.py)
 # CONNECTS TO (external boundaries only):
+#   - imports from src/asf/contracts/errors.py: ConfigError (no terminal)
 #   - called by src/asf/cli/flows.py: choose, ask_text, confirm, is_interactive
 #   - called by tests/cli/ui/test_menus.py: is_interactive, choose, ask_text, confirm
 #   - emits/consumes: none
@@ -18,17 +19,41 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/cli/ui/test_menus.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/cli/ui/menus.py` and `uv run mypy src/asf/cli/ui/menus.py` are clean.
 
+import sys
+
+import questionary
+
+from asf.contracts.errors import ConfigError
+
+
 def is_interactive() -> bool:
-    raise NotImplementedError
+    """True only when both stdin and stdout are terminals; guided flows and prompts need that."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _require_tty() -> None:
+    if not is_interactive():
+        raise ConfigError("This prompt needs an interactive terminal. Pass the values as command-line options instead.")
+
+
+def _answered(value: object) -> object:
+    if value is None:  # questionary returns None when the user presses Ctrl+C
+        raise KeyboardInterrupt
+    return value
 
 
 def choose(title: str, options: list[str], default: str | None = None) -> str:
-    raise NotImplementedError
+    _require_tty()
+    answer = questionary.select(title, choices=options, default=default if default in options else None).ask()
+    return str(_answered(answer))
 
 
 def ask_text(prompt: str, default: str | None = None, multiline: bool = False) -> str:
-    raise NotImplementedError
+    _require_tty()
+    answer = questionary.text(prompt, default=default or "", multiline=multiline).ask()
+    return str(_answered(answer))
 
 
 def confirm(prompt: str, default: bool = False) -> bool:
-    raise NotImplementedError
+    _require_tty()
+    return bool(_answered(questionary.confirm(prompt, default=default).ask()))

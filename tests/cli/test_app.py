@@ -17,10 +17,14 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/cli/test_app.py` on Windows and Linux once src/asf/cli/app.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/cli/test_app.py` and `uv run mypy tests/cli/test_app.py` are clean.
 
+from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from asf.cli.app import app, main
+
+EXPECTED = {"doctor", "init", "project", "run", "trace", "inbox", "dash", "tasks", "history", "report", "models", "skills", "events", "config", "stats", "mcp", "web"}
 
 
 def test_main_meets_contract() -> None:
@@ -30,3 +34,34 @@ def test_main_meets_contract() -> None:
     result = runner.invoke(app, ["doctor", "--output", "plain"])
     assert result.exit_code in (0, 1, 2)
     assert "python" in result.stdout.lower()
+
+
+def test_every_command_is_registered() -> None:
+    names = {c.name for c in app.registered_commands} | {g.name for g in app.registered_groups}
+    assert EXPECTED <= names
+
+
+def test_help_lists_the_commands() -> None:
+    result = CliRunner().invoke(app, ["--help"])
+    assert result.exit_code == 0 and all(name in result.stdout for name in ("run", "inbox", "trace", "doctor"))
+
+
+def test_bare_factory_without_a_terminal_exits_2() -> None:
+    assert CliRunner().invoke(app, []).exit_code == 2
+
+
+def test_a_missing_project_is_an_environment_error_with_the_fix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(app, ["history", "list"])
+    assert result.exit_code == 2 and "factory init" in result.stderr
+
+
+def test_a_user_error_exits_1_with_a_message() -> None:
+    result = CliRunner().invoke(app, ["doctor", "--output", "fancy"])
+    assert result.exit_code != 0
+
+
+def test_command_registration_failures_are_not_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asf.cli.app as app_mod
+
+    assert all(hasattr(m, "register") for m in app_mod._COMMAND_MODULES)

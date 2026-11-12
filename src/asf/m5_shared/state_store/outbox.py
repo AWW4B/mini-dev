@@ -8,6 +8,7 @@
 #   - imports from src/asf/m5_shared/events/event_log.py: EventLog (IF-17 append)
 #   - imports from src/asf/contracts/events.py: EventEnvelope (the parsed outbox payload)
 #   - called by tests/m5_shared/state_store/test_outbox.py: OutboxRelay
+#   - called by src/asf/m3_orchestration/run_graph.py: OutboxRelay
 #   - emits/consumes: consumes outbox rows; emits EventEnvelope via EventLog.append
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

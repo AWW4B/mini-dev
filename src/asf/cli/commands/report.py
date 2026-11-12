@@ -7,6 +7,7 @@
 #   - imports from src/asf/m5_shared/state_store/store.py: StateStore (read-only queries / command rows)
 #   - imports from src/asf/m5_shared/workspace/blobs.py: BlobStore (report blob)
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
+#   - imports from src/asf/cli/context.py: EXIT_OK, EXIT_USER, guard, open_store, renderer_for, resolve_run_id (shared CLI plumbing)
 #   - called by src/asf/cli/app.py: register
 #   - called by tests/cli/commands/test_report.py: report, register
 #   - emits/consumes: none
@@ -25,15 +26,61 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/cli/commands/test_report.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/cli/commands/report.py` and `uv run mypy src/asf/cli/commands/report.py` are clean.
 
+import json
 from pathlib import Path
 
 import typer
 
+from asf.cli.context import EXIT_OK, EXIT_USER, guard, open_store, renderer_for, resolve_run_id
+from asf.m5_shared.state_store.store import StateStore
+from asf.m5_shared.workspace.blobs import BlobStore
+
+
+def _report_ref(store: StateStore, run_id: str) -> str | None:
+    """The report blob of a finished run: the run_completed event (relayed) or, before the relay, the outbox row."""
+    conn = store.conn
+    for sql in (
+        "SELECT payload FROM events WHERE run_id = ? AND kind = 'run_completed' ORDER BY seq DESC LIMIT 1",
+        "SELECT payload FROM outbox WHERE run_id = ? ORDER BY id DESC",
+    ):
+        for row in conn.execute(sql, (run_id,)):
+            data = json.loads(row["payload"])
+            if data.get("kind") == "run_completed" and data.get("payload", {}).get("report_ref"):
+                return str(data["payload"]["report_ref"])
+    return None
+
 
 def report(run_id: str, out: Path | None = None) -> int:
-    raise NotImplementedError
+    """Print the final report (requirements, acceptance, decision log, cost) or write it to ``out``."""
+    renderer = renderer_for("plain")
+    store = open_store(readonly=True)
+    try:
+        chosen = resolve_run_id(store, run_id or None)
+        ref = _report_ref(store, chosen)
+        run = store.conn.execute("SELECT status, cost, cost_estimated FROM runs WHERE run_id = ?", (chosen,)).fetchone()
+    finally:
+        store.close()
+    if ref is None:
+        status = run["status"] if run is not None else "unknown"
+        renderer.message(f"Run {chosen} has no report yet (status: {status}). A report is written when the run completes.", "error")
+        return EXIT_USER
+    text = BlobStore().get(ref).decode("utf-8", errors="replace")
+    cost = f"{run['cost']:.4f}{' (estimated)' if run['cost_estimated'] else ''}" if run is not None else "unknown"
+    text += f"\n\n## Cost\n{cost}\n"
+    if out is not None:
+        out.write_text(text, encoding="utf-8")
+        renderer.message(f"Report written to {out}", "success")
+    else:
+        renderer.out.write(text)
+    return EXIT_OK
 
 
 def register(app: typer.Typer) -> None:
     """Attach the `report` command(s) to the root Typer app."""
-    raise NotImplementedError
+
+    @app.command("report", help="Print or save the final report of a run.")
+    def report_cmd(
+        run_id: str = typer.Argument("", help="Run id (default: the latest run)"),
+        out: Path | None = typer.Option(None, "--out", help="Write the report to this file"),
+    ) -> None:
+        raise typer.Exit(code=guard(lambda: report(run_id, out)))

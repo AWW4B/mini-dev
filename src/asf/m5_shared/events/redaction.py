@@ -40,7 +40,12 @@ _ASSIGNMENT_PATTERN = re.compile(r"(?i)\b(api[_-]?key|secret|token|password|auth
 
 _WITHHELD = "[REDACTED: redaction failed]"
 
-_SECRET_KEY_NAMES = frozenset({"key", "token", "secret", "password", "auth", "credential", "api_key", "secret_token", "access_token"})
+# A field is secret when one of its name parts is one of these ("api_key", "access_token", "Authorization"), not when the
+# letters merely occur inside another word: "tokens_in" and "max_tokens" are counters that events and metrics must keep.
+_SECRET_NAME_PARTS = frozenset(
+    {"key", "apikey", "token", "secret", "password", "passwd", "pwd", "auth", "authorization", "credential", "credentials", "bearer", "cookie"}
+)
+_NAME_SPLIT = re.compile(r"[^a-z0-9]+")
 
 
 def redact_text(text: str) -> str:
@@ -61,8 +66,7 @@ def redact_text(text: str) -> str:
 
 
 def _redact_value(val: Any, key_name: str = "") -> Any:
-    key_lower = key_name.lower().replace("-", "_")
-    if any(s in key_lower for s in _SECRET_KEY_NAMES):
+    if any(part in _SECRET_NAME_PARTS for part in _NAME_SPLIT.split(key_name.lower())):
         return "[REDACTED]"
 
     if isinstance(val, str):

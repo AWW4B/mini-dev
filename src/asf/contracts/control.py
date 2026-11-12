@@ -11,6 +11,8 @@
 #   - called by src/asf/cli/run_controls.py: RunControl, RunCommand
 #   - called by tests/contracts/test_control.py: RunCommand, RunControl, CancelSignal
 #   - called by tests/m3_orchestration/test_run_control.py: RunControl
+#   - called by tests/cli/test_run_controls.py: RunCommand
+#   - called by src/asf/cli/commands/run.py: RunCommand
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

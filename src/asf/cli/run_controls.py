@@ -6,6 +6,9 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/contracts/control.py: RunControl, RunCommand (IF-05)
 #   - imports from src/asf/m5_shared/state_store/store.py: StateStore (read-only queries / command rows)
+#   - imports from src/asf/cli/context.py: open_store (this project's state store)
+#   - imports from src/asf/contracts/errors.py: ConfigError (unknown run / missing task)
+#   - imports from src/asf/contracts/ids.py: new_id (command ids)
 #   - called by src/asf/cli/commands/run.py: send_command
 #   - called by tests/cli/test_run_controls.py: send_command
 #   - emits/consumes: none
@@ -18,9 +21,22 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/cli/test_run_controls.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/cli/run_controls.py` and `uv run mypy src/asf/cli/run_controls.py` are clean.
 
-from asf.contracts.control import RunCommand
+from asf.cli.context import open_store
+from asf.contracts.control import RunCommand, RunControl
+from asf.contracts.errors import ConfigError
+from asf.contracts.ids import new_id
 
 
 def send_command(run_id: str, command: RunCommand, task_id: str | None = None) -> str:
-    """Insert the command row; return command_id."""
-    raise NotImplementedError
+    """Insert the command row; return command_id. The run supervisor applies it; the CLI never touches execution state."""
+    if command is RunCommand.CANCEL_TASK and not task_id:
+        raise ConfigError("cancel-task needs a task id.")
+    store = open_store()
+    try:
+        if store.conn.execute("SELECT 1 FROM runs WHERE run_id = ?", (run_id,)).fetchone() is None:
+            raise ConfigError(f"Unknown run '{run_id}'. `factory history list` shows the runs of this project.")
+        command_id = new_id("cmd")
+        store.put_command(RunControl.model_validate({"command_id": command_id, "run_id": run_id, "command": command, "task_id": task_id}))
+        return command_id
+    finally:
+        store.close()

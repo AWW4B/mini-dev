@@ -32,6 +32,8 @@
 #   - imports from src/asf/m5_shared/tools/executor.py: ToolExecutor (tool calls)
 #   - imports from src/asf/m5_shared/tools/registry.py: ToolRegistry (tool registry)
 #   - imports from src/asf/m5_shared/workspace/workspace.py: Workspace (git worktrees)
+#   - imports from src/asf/m5_shared/events/event_log.py: EventLog (the log the relay feeds)
+#   - imports from src/asf/m5_shared/state_store/outbox.py: OutboxRelay (committed events reach the event log)
 #   - called by src/asf/cli/commands/run.py: start_run, resume_run
 #   - called by tests/m3_orchestration/test_run_graph.py: build_run_graph, start_run, resume_run
 #   - emits/consumes: emits RUN_STARTED, RUN_COMPLETED, emits narrative events TASK_RECEIVED, STEP_STARTED, HANDOFF_SENT, HANDOFF_RECEIVED (with causation_id set to the triggering event) via StateStore.commit
@@ -59,7 +61,7 @@ from typing import Any, TypedDict
 
 from langgraph.config import get_config
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import Command
+from langgraph.types import Command, interrupt
 
 from asf.config.paths import get_paths
 from asf.contracts.budget import RunBudget
@@ -77,6 +79,8 @@ from asf.m3_orchestration.planning.modes import select_mode
 from asf.m3_orchestration.planning.planner_graph import build_planner_graph, plan_result
 from asf.m3_orchestration.run_control import RunSupervisor
 from asf.m5_shared.decisions.broker import DecisionBroker
+from asf.m5_shared.events.event_log import EventLog
+from asf.m5_shared.state_store.outbox import OutboxRelay
 from asf.m5_shared.state_store.store import StateStore
 from asf.m5_shared.workspace.blobs import BlobStore
 
@@ -123,6 +127,13 @@ def _event(run_id: str, kind: str, payload: dict[str, Any], task_id: str | None 
     }
 
 
+def _relay() -> None:
+    """Move committed outbox rows into the event log so the trace, dashboard and web viewer can read them."""
+    relay: OutboxRelay | None = _dep("relay")
+    if relay is not None:
+        relay.relay_once()
+
+
 def _set_status(store: StateStore, run_id: str, status: str, kind: str | None = None, payload: dict[str, Any] | None = None) -> None:
     """Commit the run's status (and optionally one event) in a single transaction."""
     row = store.conn.execute("SELECT version FROM runs WHERE run_id = ?", (run_id,)).fetchone()
@@ -132,6 +143,7 @@ def _set_status(store: StateStore, run_id: str, status: str, kind: str | None = 
             {"entity": "run", "entity_id": run_id, "expected_version": int(row["version"]) if row else None, "mutation": {"status": status}, "events": events}
         )
     )
+    _relay()
 
 
 # -- nodes -----------------------------------------------------------------------------------------------------------
@@ -160,6 +172,7 @@ def _node_create_run(state: RunState) -> dict[str, Any]:
                 }
             )
         )
+        _relay()
     return {"status": "RUNNING", "replan_rounds": state.get("replan_rounds", 0)}
 
 
@@ -235,12 +248,15 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
         command = control() if control is not None else None
         if command == "pause":
             _set_status(store, state["run_id"], "PAUSED", "state_changed")
-            return {"status": "PAUSED", "note": "paused by the user; resume it with the run controls"}
+            interrupt({"paused": True, "run_id": state["run_id"]})  # the run waits here until `factory run resume`
+            _set_status(store, state["run_id"], "RUNNING", "state_changed")
+            continue
         if command == "abort":
             _set_status(store, state["run_id"], "CANCELLED", "cancelled")
             return {"status": "CANCELLED", "note": "aborted by the user"}
 
         requests = driver() if driver is not None else None
+        _relay()
         if requests and (requests.get("resplit") or requests.get("woken")):
             graph = build_decomposition_graph(None)
             out = graph.invoke({"plan": plan, "resplit": requests.get("resplit", {}), "requirement_ids": []}, get_config())
@@ -403,6 +419,7 @@ def default_components(project_root: Path, run_id: str, overrides: dict[str, Any
         return {"PAUSED": "pause", "CANCELLED": "abort"}.get(supervisor.status)
 
     components["control"] = overrides.get("control") or control
+    components["relay"] = overrides.get("relay") or OutboxRelay(store, EventLog(store.conn, components["blobs"]))
     components["supervisor"] = supervisor
     for name in ("gateway", "registry", "scheduler", "runtime", "driver", "regression", "acceptance", "authoring", "budget", "sleep", "max_ticks", "base_commit", "parent_branch", "lazy", "planner_strategy"):
         if name in overrides:
@@ -430,6 +447,9 @@ def _build_execution(components: dict[str, Any], project_root: Path, run_id: str
     workspace = overrides.get("workspace") or Workspace(project_root)
     runtime = overrides.get("runtime") or LocalRuntime(max_slots=1)
     gateway = components.get("gateway") or ModelGateway(str(overrides.get("profile_name", "hybrid")), components.get("budget") or _default_budget(run_id))
+    for role, name in dict(overrides.get("model_overrides", {})).items():  # --model ROLE=NAME
+        gateway.roles.setdefault(role, {})["model"] = name
+    gateway.strategies.update(dict(overrides.get("strategy_overrides", {})))  # --strategy ROLE=NAME
     tools = ToolRegistry()
     register_builtin_tools(tools)
     executor = ToolExecutor(registry=tools, broker=components["decision_broker"])
@@ -518,6 +538,18 @@ def start_run(request: StructuredRequest, project_root: Path, overrides: dict[st
     return run_id
 
 
+def _set_status_outside_graph(store: StateStore, run_id: str, status: str) -> None:
+    row = store.conn.execute("SELECT version FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+    store.commit(
+        StateCommit.model_validate(
+            {
+                "entity": "run", "entity_id": run_id, "expected_version": int(row["version"]) if row else None,
+                "mutation": {"status": status}, "events": [_event(run_id, "state_changed", {"status": status})],
+            }
+        )
+    )
+
+
 def _resolved_choice(store: StateStore, decision_id: str) -> str | None:
     row = store.conn.execute("SELECT payload, status FROM decisions WHERE decision_id = ?", (decision_id,)).fetchone()
     if row is None or row["status"] != "RESOLVED":
@@ -543,6 +575,12 @@ def resume_run(run_id: str, project_root: Path, overrides: dict[str, Any] | None
     resume: dict[str, str] = {}
     for task in snapshot.tasks:
         for pending in task.interrupts:
+            if isinstance(pending.value, dict) and pending.value.get("paused"):
+                row = store.conn.execute("SELECT status FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+                if row is not None and row["status"] == "PAUSED":
+                    _set_status_outside_graph(store, run_id, "RUNNING")
+                    resume[pending.id] = "resume"
+                continue
             decision_id = str(pending.value.get("decision_id", "")) if isinstance(pending.value, dict) else ""
             choice = _resolved_choice(store, decision_id)
             if choice is not None:

@@ -8,6 +8,7 @@
 #   - imports from src/asf/contracts/events.py: EventEnvelope, EventKind (shape)
 #   - called by src/asf/cli/views/trace_view.py: EventFanout
 #   - called by tests/m5_shared/events/test_fanout.py: EventFanout
+#   - called by tests/cli/views/test_trace_view.py: EventFanout
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
