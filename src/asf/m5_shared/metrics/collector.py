@@ -45,7 +45,7 @@ class MetricsCollector:
         with self.store.conn:
             self.store.conn.execute(
                 "INSERT INTO call_metrics (run_id, task_id, provider, model, input_tokens, output_tokens, "
-                "cost, duration_ms, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "cost, duration_ms, timestamp, role, strategy, estimated, retry_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     metric.run_id,
                     metric.task_id,
@@ -56,6 +56,10 @@ class MetricsCollector:
                     metric.cost,
                     metric.latency_ms,
                     now_iso,
+                    metric.role,
+                    metric.strategy,
+                    is_estimated,
+                    metric.retry_no,
                 ),
             )
             self.store.conn.execute(
@@ -70,9 +74,10 @@ class MetricsCollector:
 
         with self.store.conn:
             self.store.conn.execute(
-                "INSERT INTO tool_metrics (run_id, task_id, tool_name, duration_ms, success, timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (metric.run_id, metric.task_id, metric.tool, metric.duration_ms, success, now_iso),
+                "INSERT INTO tool_metrics (run_id, task_id, tool_name, duration_ms, success, timestamp, strategy, approval, "
+                "sandbox_tier, exit_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (metric.run_id, metric.task_id, metric.tool, metric.duration_ms, success, now_iso, metric.strategy, metric.approval,
+                 metric.sandbox_tier, str(metric.exit_status)),
             )
 
     def record_limit(self, event: LimitEvent) -> None:

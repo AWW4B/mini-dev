@@ -46,7 +46,11 @@ def _create_metrics_tables(conn: sqlite3.Connection) -> None:
             output_tokens INTEGER NOT NULL DEFAULT 0,
             cost REAL NOT NULL DEFAULT 0.0,
             duration_ms INTEGER NOT NULL DEFAULT 0,
-            timestamp TEXT NOT NULL
+            timestamp TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT '',
+            strategy TEXT NOT NULL DEFAULT '',
+            estimated INTEGER NOT NULL DEFAULT 0,
+            retry_no INTEGER NOT NULL DEFAULT 0
         );
         """
     )
@@ -59,7 +63,11 @@ def _create_metrics_tables(conn: sqlite3.Connection) -> None:
             tool_name TEXT NOT NULL,
             duration_ms INTEGER NOT NULL DEFAULT 0,
             success INTEGER NOT NULL DEFAULT 1,
-            timestamp TEXT NOT NULL
+            timestamp TEXT NOT NULL,
+            strategy TEXT NOT NULL DEFAULT '',
+            approval TEXT NOT NULL DEFAULT '',
+            sandbox_tier TEXT NOT NULL DEFAULT '',
+            exit_status TEXT NOT NULL DEFAULT ''
         );
         """
     )
@@ -153,3 +161,26 @@ def test_metrics_collector_meets_contract(tmp_path: Path) -> None:
         assert "run-1" in content
 
     conn.close()
+
+
+def test_role_strategy_and_the_estimate_flag_are_kept_for_comparisons(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    _create_metrics_tables(conn)
+    conn.execute("INSERT INTO runs (run_id) VALUES ('r1')")
+    collector = MetricsCollector(SimpleNamespace(conn=conn))  # type: ignore[arg-type]
+    collector.record_call(
+        SimpleNamespace(
+            run_id="r1", task_id="t1", role="worker", provider="local", model="m", strategy="tool_loop", tokens_in=10, tokens_out=5,
+            latency_ms=7, cost=0.0, source=SimpleNamespace(value="ESTIMATED"), retry_no=2,
+        )  # type: ignore[arg-type]
+    )
+    collector.record_tool(
+        SimpleNamespace(
+            run_id="r1", task_id="t1", tool="read_file", strategy="code_exec", duration_ms=3, exit_status="ok", approval="auto", sandbox_tier="A"
+        )  # type: ignore[arg-type]
+    )
+    call = conn.execute("SELECT role, strategy, estimated, retry_no FROM call_metrics").fetchone()
+    assert tuple(call) == ("worker", "tool_loop", 1, 2)
+    tool = conn.execute("SELECT strategy, approval, sandbox_tier, exit_status FROM tool_metrics").fetchone()
+    assert tuple(tool) == ("code_exec", "auto", "A", "ok")

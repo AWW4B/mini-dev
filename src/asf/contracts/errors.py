@@ -32,6 +32,7 @@
 #   - called by tests/m3_orchestration/planning/test_planner_graph.py: ProviderUnavailable
 #   - called by src/asf/m3_orchestration/decomposition/splitter.py: InvalidModelOutput
 #   - called by src/asf/m3_orchestration/decomposition/decomposition_graph.py: AsfError
+#   - called by src/asf/m5_shared/state_store/schema.py: ConfigError
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
