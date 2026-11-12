@@ -28,6 +28,7 @@
 #   - called by src/asf/cli/commands/report.py: StateStore
 #   - called by src/asf/cli/run_controls.py: StateStore
 #   - called by tests/m5_shared/state_store/test_store.py: StateStore
+#   - called by tests/m5_shared/state_store/test_recovery.py: StateStore
 #   - emits/consumes: writes outbox rows holding EventEnvelope (IF-17) in the same transaction as each mutation
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
