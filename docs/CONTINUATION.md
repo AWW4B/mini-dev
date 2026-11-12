@@ -24,6 +24,8 @@ This document preserves the complete roadmap, ground rules, environment setup, a
 
 ---
 
+> Hardening, testing and the branch-per-feature workflow for finishing the product are in `docs/EXECUTION_PLAN.md`; follow it phase by phase.
+
 ## 1. Quick Setup on a New Machine
 
 1. **Install Prerequisites**:
@@ -149,6 +151,24 @@ For each unit:
   - `src/asf/m5_shared/runtime/backends.py` (LocalRuntimeBackend adapters: llama-server, Ollama, External)
   - `src/asf/m5_shared/runtime/local_runtime.py` (LocalRuntime: slot leases, heartbeat, expiry, residency)
   - `src/asf/m5_shared/runtime/calibration.py` (Calibration: tokens/s, VRAM by context, ModelProfile production)
+
+- **Batch 5 (M5 Shared: Context, Tools, Recovery)**:
+  - `src/asf/m5_shared/state_store/backup.py` (Online backups of state.db and checkpoints.db with retention)
+  - `src/asf/m5_shared/state_store/recovery.py` (Crash/restart reconciliation before any graph resumes)
+  - `src/asf/m5_shared/context/repo_index.py` (Static code index: symbols, imports, test<->source map)
+  - `src/asf/m5_shared/context/memory.py` (Decision log and project memory with source-hash invalidation)
+  - `src/asf/m5_shared/context/compaction.py` (Conversation compaction with the tiny T1 model)
+  - `src/asf/m5_shared/context/context_service.py` (ContextPack builder under a token budget)
+  - `src/asf/m5_shared/tools/registry.py` (Single registry of builtin, MCP and codeexec tools)
+  - `src/asf/m5_shared/tools/policy.py` (Allow / deny / needs-approval decisions)
+  - `src/asf/m5_shared/tools/executor.py` (Single choke point for every tool call)
+  - `src/asf/m5_shared/tools/builtin_tools.py` (read, write, search, run tests, lint, list files)
+  - `src/asf/m5_shared/tools/skills.py` (Agent Skills index, metadata first)
+  - `src/asf/m5_shared/tools/mcp_client.py` (Default-deny MCP server client)
+  - `src/asf/m5_shared/tools/codeexec/channel.py` (Framed JSON channel between script and parent)
+  - `src/asf/m5_shared/tools/codeexec/facade_gen.py` (Typed Python facade generator)
+  - `src/asf/m5_shared/tools/codeexec/runner.py` (Sandboxed script runner)
+  - `src/asf/m5_shared/tools/codeexec/search.py` (search_tools(query, detail))
 
 - **Batch 6 (M2 Request)**:
   - `src/asf/m2_request/document_ingestion.py` (MarkItDown extraction, BlobStore storage, media detection, quality scoring)
