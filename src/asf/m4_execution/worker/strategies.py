@@ -54,8 +54,8 @@ _SYSTEM = (
 )
 _TOOL_SHAPE = (
     'Shapes: {"action": "tool", "tool": "<name>", "args": {...}} | {"action": "done", "message": "<self-report>"} | '
-    '{"action": "blocked", "message": "<reason>"}. Tools: read_file(path), write_file(path, content), search_code(query), '
-    "run_tests(args), run_linter(args), list_files(path)."
+    '{"action": "blocked", "message": "<reason>"}. Tools: read_file(rel_path), write_file(rel_path, content), search_code(pattern), '
+    "run_tests(selectors: list of test ids), run_linter(files: list of paths)."
 )
 _FILES_SHAPE = (
     'Shape: {"action": "done", "message": "<self-report>", "files": {"<allowed path>": "<complete new file content>"}} '
@@ -163,7 +163,7 @@ def _whole_file_edit(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, e
     if not isinstance(files, dict) or not files:
         raise WorkerFormatError("whole_file_edit needs a non-empty 'files' object")
     for path, content in files.items():
-        outcome = _invoke_tool(executor, spec, "write_file", {"path": str(path), "content": str(content)}, worktree)
+        outcome = _invoke_tool(executor, spec, "write_file", {"rel_path": str(path), "content": str(content)}, worktree)
         if not outcome.startswith("[ok]"):
             raise WorkerFormatError(f"writing {path} failed: {outcome}")
     return f"whole_file_edit wrote {len(files)} file(s): {step.get('message', '')}"

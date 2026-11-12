@@ -10,6 +10,7 @@
 #   - called by src/asf/m5_shared/tools/mcp_client.py: ToolRegistry
 #   - called by src/asf/m5_shared/tools/codeexec/search.py: ToolRegistry
 #   - called by tests/m5_shared/tools/test_registry.py: ToolRegistry
+#   - called by tests/m5_shared/tools/test_executor.py: ToolRegistry
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

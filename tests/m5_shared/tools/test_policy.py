@@ -163,3 +163,14 @@ def test_a_broken_policy_file_stops_the_engine_instead_of_becoming_an_empty_poli
     with pytest.raises(Exception) as info:  # noqa: PT011 - ConfigError lives in contracts, which this test does not import
         PolicyEngine()
     assert type(info.value).__name__ == "ConfigError"
+
+
+def test_the_rel_path_argument_is_checked_against_the_allowed_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path / "home"))
+    engine = PolicyEngine()
+    spec = SimpleNamespace(name="write_file", roles=["worker"], needs_network=False, destructive=False, source="builtin")
+    inv = SimpleNamespace(tool="write_file", role="worker", args={"rel_path": "secret.py", "content": "x"}, workspace_dir=str(tmp_path))
+    verdict = engine.check(inv, spec, "A", ["src/ok.py"])  # type: ignore[arg-type]
+    assert verdict.verdict is Verdict.DENY
+    allowed = engine.check(SimpleNamespace(**{**vars(inv), "args": {"rel_path": "src/ok.py", "content": "x"}}), spec, "A", ["src/ok.py"])  # type: ignore[arg-type]
+    assert allowed.verdict is Verdict.ALLOW

@@ -62,7 +62,7 @@ class _Gateway:
                 outer.prompts.append(prompt)
                 if "Result:" not in prompt:
                     return SimpleNamespace(
-                        content=json.dumps({"action": "tool", "tool": "write_file", "args": {"path": "src/billing.py", "content": outer.worktree_edit}})
+                        content=json.dumps({"action": "tool", "tool": "write_file", "args": {"rel_path": "src/billing.py", "content": outer.worktree_edit}})
                     )
                 return SimpleNamespace(content=json.dumps({"action": "done", "message": "wrote billing"}))
 
@@ -74,7 +74,7 @@ class _Executor:
         return "B"
 
     def invoke(self, invocation: Any, allowed_files: list[str]) -> Any:
-        target = Path(invocation.workspace_dir) / invocation.args["path"]
+        target = Path(invocation.workspace_dir) / invocation.args["rel_path"]
         target.write_text(invocation.args["content"], encoding="utf-8")
         return SimpleNamespace(status="ok", output="written")
 

@@ -90,7 +90,7 @@ class PolicyEngine:
 
         # 4. Path argument validation
         ws_path = Path(invocation.workspace_dir)
-        path_keys = {"path", "file", "filepath", "filename", "dest", "target", "cwd"}
+        path_keys = {"path", "rel_path", "file", "filepath", "filename", "dest", "target", "cwd"}
         for k, v in invocation.args.items():
             if k.lower() in path_keys or (isinstance(v, str) and ("/" in v or "\\" in v)):
                 val_str = str(v)
