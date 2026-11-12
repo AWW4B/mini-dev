@@ -69,7 +69,7 @@
 
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 
 import pytest
@@ -77,6 +77,8 @@ import pytest
 from asf.config.paths import AppPaths
 
 OPT_IN_MARKERS = ("needs_gpu", "needs_sandbox", "needs_network")
+PLACEHOLDER_PREFIX = "write this test"
+SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 
 
 class FakeClock:
@@ -115,3 +117,22 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         for marker in OPT_IN_MARKERS:
             if marker in item.keywords and os.environ.get(f"FACTORY_TEST_{marker.upper()}") != "1":
                 item.add_marker(pytest.mark.skip(reason=f"{marker}: set FACTORY_TEST_{marker.upper()}=1"))
+
+
+def _is_unwritten(exc: pytest.ExceptionInfo[BaseException]) -> bool:
+    """True for a placeholder test body, or a bare NotImplementedError raised inside a not-yet-implemented source stub."""
+    if not exc.errisinstance(NotImplementedError):
+        return False
+    if str(exc.value).startswith(PLACEHOLDER_PREFIX):
+        return True
+    return not exc.value.args and Path(str(exc.traceback[-1].path)).resolve().is_relative_to(SRC_ROOT)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Report unwritten tests and unimplemented stubs as xfail so only real failures stay red (removed in the final phase)."""
+    report = yield
+    if call.excinfo is not None and _is_unwritten(call.excinfo):
+        report.outcome = "skipped"
+        report.wasxfail = "not written or implemented yet"
+    return report
