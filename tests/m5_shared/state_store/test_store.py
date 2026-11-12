@@ -143,3 +143,17 @@ def test_unknown_entity_names_never_reach_the_sql(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Unknown entity"):
         store.commit(change)  # type: ignore[arg-type]
     assert store.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0  # the table still exists
+
+
+def test_a_run_update_that_does_not_mention_status_or_cost_keeps_them(tmp_path: Path) -> None:
+    store = StateStore.open(tmp_path / "state.db")
+    def make(entity_id: str, expected: int | None, mutation: dict[str, object]) -> SimpleNamespace:
+        return SimpleNamespace(entity="run", entity_id=entity_id, expected_version=expected, mutation=mutation, events=[])
+
+    store.commit(make("r1", None, {"project_id": "p", "status": "RUNNING", "cost": 1.5, "cost_estimated": True}))  # type: ignore[arg-type]
+    store.commit(make("r1", 1, {"note": "only this changes"}))  # type: ignore[arg-type]
+    row = store.conn.execute("SELECT status, cost, cost_estimated, version FROM runs WHERE run_id = 'r1'").fetchone()
+    assert (row["status"], row["cost"], row["cost_estimated"], row["version"]) == ("RUNNING", 1.5, 1, 2)
+    store.commit(make("r1", 2, {"status": "PAUSED"}))  # type: ignore[arg-type]
+    row = store.conn.execute("SELECT status, cost FROM runs WHERE run_id = 'r1'").fetchone()
+    assert (row["status"], row["cost"]) == ("PAUSED", 1.5)

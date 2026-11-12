@@ -167,11 +167,20 @@ class StateStore:
                          payload_str),
                     )
                 else:
+                    # A mutation that does not mention status, cost or cost_estimated must leave the stored values alone.
                     self.conn.execute(
                         "UPDATE runs SET version = ?, status = coalesce(?, status), last_activity = ?, "
                         "cost = coalesce(?, cost), cost_estimated = coalesce(?, cost_estimated), payload = ? "
                         "WHERE run_id = ?",
-                        (new_version, status, now_iso, cost, cost_est, payload_str, change.entity_id),
+                        (
+                            new_version,
+                            str(change.mutation["status"]) if "status" in change.mutation else None,
+                            now_iso,
+                            float(change.mutation["cost"]) if "cost" in change.mutation else None,
+                            int(bool(change.mutation["cost_estimated"])) if "cost_estimated" in change.mutation else None,
+                            payload_str,
+                            change.entity_id,
+                        ),
                     )
             else:
                 if current_version is None:
