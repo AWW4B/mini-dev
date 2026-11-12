@@ -20,6 +20,7 @@
 #   - called by src/asf/contracts/history.py: ProjectId, RunId
 #   - called by tests/contracts/test_ids.py: new_id, ProjectId, RunId, TaskId, AttemptId, EventId, DecisionId, LeaseId, CommandId, ContractId
 #   - called by src/asf/m3_orchestration/run_graph.py: new_id
+#   - called by src/asf/cli/run_controls.py: new_id
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

@@ -33,6 +33,10 @@
 #   - called by src/asf/m3_orchestration/decomposition/splitter.py: InvalidModelOutput
 #   - called by src/asf/m3_orchestration/decomposition/decomposition_graph.py: AsfError
 #   - called by src/asf/m5_shared/state_store/schema.py: ConfigError
+#   - called by src/asf/cli/ui/menus.py: ConfigError
+#   - called by src/asf/cli/project_input.py: ConfigError
+#   - called by src/asf/cli/run_controls.py: ConfigError
+#   - called by src/asf/cli/context.py: ConfigError
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

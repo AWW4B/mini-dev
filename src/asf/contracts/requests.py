@@ -18,6 +18,7 @@
 #   - called by tests/m3_orchestration/planning/test_modes.py: StructuredRequest
 #   - called by tests/m3_orchestration/planning/test_planner_graph.py: StructuredRequest
 #   - called by tests/m3_orchestration/test_run_graph.py: StructuredRequest
+#   - called by tests/cli/test_project_input.py: TaskType
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
