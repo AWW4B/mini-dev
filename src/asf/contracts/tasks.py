@@ -23,6 +23,7 @@
 #   - called by src/asf/cli/views/task_tree_view.py: TaskNode
 #   - called by tests/contracts/test_tasks.py: NodeKind, TaskState, NodeCounters, TaskNode, StepBudget, LeafTaskSpec, AttemptRecord
 #   - called by src/asf/m4_execution/integration/integrator.py: LeafTaskSpec, TaskNode
+#   - called by tests/m3_orchestration/test_lifecycle.py: TaskNode, TaskState
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

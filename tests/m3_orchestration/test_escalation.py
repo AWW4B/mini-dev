@@ -5,6 +5,7 @@
 # DOES NOT OWN: Production code; fixtures shared with other modules (put those in tests/conftest.py)
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/m3_orchestration/escalation.py: handle_escalation (unit under test)
+#   - imports from src/asf/contracts/outcomes.py: TaskOutcome (used here)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -17,10 +18,85 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m3_orchestration/test_escalation.py` on Windows and Linux once src/asf/m3_orchestration/escalation.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m3_orchestration/test_escalation.py` and `uv run mypy tests/m3_orchestration/test_escalation.py` are clean.
 
+from types import SimpleNamespace
+from typing import Any
 
-from asf.m3_orchestration.escalation import handle_escalation  # noqa: F401
+import pytest
+
+from asf.contracts.outcomes import TaskOutcome
+from asf.m3_orchestration.escalation import handle_escalation
 
 
-def test_handle_escalation_meets_contract() -> None:
-    """Prove handle_escalation behaves as declared in src/asf/m3_orchestration/escalation.py."""
-    raise NotImplementedError("write this test before implementing handle_escalation")
+class _Broker:
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+        self.resolved_answers: dict[str, Any] = {}
+
+    def request(self, req: Any) -> None:
+        self.requests.append(req)
+
+
+def _outcome(failure: str, task_id: str = "t1") -> TaskOutcome:
+    return TaskOutcome.model_validate({"task_id": task_id, "failure_class": failure, "evidence_ref": "sha256:ev", "attempts": 3})
+
+
+@pytest.mark.parametrize("failure", ["SPEC_TOO_LARGE", "CONTEXT_OVERFLOW"])
+def test_size_problems_are_resplit_once(failure: str) -> None:
+    broker = _Broker()
+    assert handle_escalation(_outcome(failure), broker=broker) == "resplit"  # type: ignore[arg-type]
+    assert broker.requests == []
+
+
+@pytest.mark.parametrize("failure", ["CONTRACT_MISMATCH", "CONTRACT_GAP", "ESCALATED", "LOCAL_BUG"])
+def test_contract_and_worker_failures_replan_while_budget_and_rounds_remain(failure: str) -> None:
+    assert handle_escalation(_outcome(failure), replans_done=1) == "replan"
+
+
+def test_a_second_size_failure_asks_for_a_manual_split() -> None:
+    broker = _Broker()
+    assert handle_escalation(_outcome("SPEC_TOO_LARGE"), broker=broker, resplits_done=1) == "ask_user"  # type: ignore[arg-type]
+    (req,) = broker.requests
+    assert req.kind.value == "manual_split" and req.default_on_timeout is None
+    assert "accept_larger_leaf" in req.options and req.evidence_refs == ["sha256:ev"]
+
+
+def test_exhausted_replans_ask_the_user() -> None:
+    broker = _Broker()
+    assert handle_escalation(_outcome("CONTRACT_MISMATCH"), broker=broker, replans_done=2) == "ask_user"  # type: ignore[arg-type]
+    assert broker.requests[0].kind.value == "escalation"
+
+
+def test_an_exhausted_budget_asks_for_a_budget_raise_first() -> None:
+    broker = _Broker()
+    assert handle_escalation(_outcome("LOCAL_BUG"), broker=broker, budget_left=False) == "ask_user"  # type: ignore[arg-type]
+    assert broker.requests[0].kind.value == "budget_raise"
+    assert broker.requests[0].options == ["raise_budget", "abort_run"]
+
+
+def test_environment_failures_are_for_a_person() -> None:
+    broker = _Broker()
+    assert handle_escalation(_outcome("ENV_INFRA"), broker=broker) == "ask_user"  # type: ignore[arg-type]
+    assert broker.requests[0].kind.value == "escalation"
+
+
+def test_the_question_is_asked_once_and_the_answer_is_honoured_later() -> None:
+    broker = _Broker()
+    outcome = _outcome("ENV_INFRA")
+    handle_escalation(outcome, broker=broker)  # type: ignore[arg-type]
+    decision_id = broker.requests[0].decision_id
+    broker.resolved_answers[decision_id] = SimpleNamespace(choice="abandon_subtree")
+    assert handle_escalation(outcome, broker=broker) == "abandon"  # type: ignore[arg-type]
+    assert len(broker.requests) == 1
+    broker.resolved_answers[decision_id] = SimpleNamespace(choice="replan")
+    assert handle_escalation(outcome, broker=broker) == "replan"  # type: ignore[arg-type]
+
+
+def test_without_a_broker_the_user_question_is_still_reported_as_ask_user() -> None:
+    assert handle_escalation(_outcome("ENV_INFRA")) == "ask_user"
+
+
+def test_the_run_id_comes_from_the_store_when_it_has_the_task() -> None:
+    broker = _Broker()
+    store = SimpleNamespace(get_task=lambda task_id: SimpleNamespace(run_id="run-42"))
+    handle_escalation(_outcome("ENV_INFRA"), broker=broker, store=store)  # type: ignore[arg-type]
+    assert broker.requests[0].run_id == "run-42"
