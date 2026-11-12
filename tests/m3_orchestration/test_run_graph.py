@@ -192,12 +192,20 @@ def test_a_rejected_plan_cancels_the_run(tmp_path: Path) -> None:
     assert _status(store) == "CANCELLED" and over["scheduler"].specs == []
 
 
-def test_a_pause_command_stops_the_run_between_ticks(tmp_path: Path) -> None:
+def test_a_pause_command_stops_the_run_between_ticks_and_resume_continues_it(tmp_path: Path) -> None:
     store = StateStore.open(tmp_path / "state.db")
-    over = _overrides(tmp_path, store, _Gateway({"modules": [_module("ledger", ["REQ-1"])]}), _Acceptance((True, [])), control=lambda: "pause")
-    over["driver"] = None
+    calls = {"n": 0}
+
+    def control() -> str | None:
+        calls["n"] += 1
+        return "pause" if calls["n"] <= 2 else None  # paused while decomposing, then again at the first monitor tick
+
+    over = _overrides(tmp_path, store, _Gateway({"modules": [_module("ledger", ["REQ-1"])]}), _Acceptance((True, [])), control=control)
     start_run(_request(), tmp_path, over)
-    assert _status(store) == "PAUSED"
+    assert _status(store) == "PAUSED" and "state_changed" in _kinds(store)
+
+    resume_run(RUN, tmp_path, over)
+    assert _status(store) == "DONE"
 
 
 def test_an_abort_command_cancels_the_run(tmp_path: Path) -> None:
