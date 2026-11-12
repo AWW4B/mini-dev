@@ -103,7 +103,9 @@ class StateStore:
     def commit(self, change: StateCommit) -> int:
         """Apply one IF-16 commit atomically; return the new entity version."""
         mapping = _ENTITY_TABLE_MAP.get(change.entity)
-        table, id_col = mapping if mapping else (change.entity, f"{change.entity}_id")
+        if mapping is None:  # the table name is interpolated into SQL below, so only known entities may reach it
+            raise ValueError(f"Unknown entity '{change.entity}'; expected one of {sorted(_ENTITY_TABLE_MAP)}")
+        table, id_col = mapping
         now_iso = datetime.now(UTC).isoformat()
 
         with self.conn:
