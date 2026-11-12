@@ -40,8 +40,7 @@ def test_text_only_request(fake_paths: Any) -> None:
 def test_attachments_are_stored_as_blobs_and_referenced_by_sha256(tmp_path: Path, fake_paths: Any) -> None:
     _ = fake_paths
     spec = tmp_path / "spec.md"
-    spec.write_bytes(b"# Requirements
-")
+    spec.write_bytes(b"# Requirements\n")
     req = build_submit_request("p1", "see attached", [spec], None, None)
     (ref,) = req.attachment_refs
     assert ref.startswith("sha256:")
