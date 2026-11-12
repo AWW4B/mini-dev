@@ -12,6 +12,7 @@
 #   - called by tests/contracts/test_contract_spec.py: ContractStatus, Operation, ContractSpec, ContractCapsule, ContractQuery
 #   - called by src/asf/m4_execution/verification/gate.py: ContractStatus
 #   - called by src/asf/m4_execution/integration/integrator.py: ContractStatus
+#   - called by src/asf/m3_orchestration/planning/planner_graph.py: ContractSpec
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

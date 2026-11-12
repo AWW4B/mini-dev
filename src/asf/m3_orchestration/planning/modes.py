@@ -20,7 +20,7 @@
 
 from enum import StrEnum
 
-from asf.contracts.requests import StructuredRequest
+from asf.contracts.requests import StructuredRequest, TaskType
 
 
 class PlanMode(StrEnum):
@@ -29,5 +29,20 @@ class PlanMode(StrEnum):
     IMPACT = "impact"
 
 
+# new build -> DESIGN; debug -> DIAGNOSIS (reproduce as a failing test, then localise);
+# feature, refactor, test generation and docs -> IMPACT (contract delta, characterisation tests first).
+_MODES: dict[TaskType, PlanMode] = {
+    TaskType.NEW_BUILD: PlanMode.DESIGN,
+    TaskType.DEBUG: PlanMode.DIAGNOSIS,
+    TaskType.FEATURE: PlanMode.IMPACT,
+    TaskType.REFACTOR: PlanMode.IMPACT,
+    TaskType.TEST_GENERATION: PlanMode.IMPACT,
+    TaskType.CODE_DOCS: PlanMode.IMPACT,
+}
+
+
 def select_mode(request: StructuredRequest) -> PlanMode:
-    raise NotImplementedError
+    mode = _MODES.get(request.task_type)
+    if mode is None:
+        raise ValueError(f"No planning mode for task type '{request.task_type}'; the request is not supported")
+    return mode
