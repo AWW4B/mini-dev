@@ -16,6 +16,8 @@
 #   - called by src/asf/config/settings.py: ConfigError
 #   - called by src/asf/m3_orchestration/lifecycle.py: StateConflict
 #   - called by src/asf/web/server.py: PolicyDenied
+#   - called by src/asf/m2_request/document_ingestion.py: ApprovalRequired
+#   - called by src/asf/m2_request/pipeline.py: PolicyDenied
 #   - called by tests/contracts/test_errors.py: AsfError, ConfigError, PolicyDenied, ApprovalRequired, BudgetExceeded, ContextOverflow, ProviderUnavailable, InvalidModelOutput, SandboxUnavailable, StateConflict, NotSupportedOnPlatform
 #   - called by tests/web/test_server.py: PolicyDenied
 #   - emits/consumes: none
