@@ -23,6 +23,7 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/tools/test_builtin_tools.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/tools/builtin_tools.py` and `uv run mypy src/asf/m5_shared/tools/builtin_tools.py` are clean.
 
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -30,6 +31,8 @@ from types import SimpleNamespace
 
 from asf.m5_shared.tools.registry import ToolRegistry
 from asf.platform.select import get_platform
+
+logger = logging.getLogger(__name__)
 
 
 def read_file(root: Path, rel_path: str) -> str:
@@ -54,8 +57,8 @@ def search_code(root: Path, pattern: str, max_hits: int = 50) -> list[str]:
             )
             lines = res.stdout.decode("utf-8", errors="replace").splitlines()
             return lines[:max_hits]
-        except Exception as _rg_err:  # noqa: BLE001
-            _ = _rg_err
+        except Exception:  # noqa: BLE001 - ripgrep is optional (D-30): fall back to the pure Python search
+            logger.debug("ripgrep search failed; using the Python fallback", exc_info=True)
 
     # Pure Python fallback (D-30)
     hits: list[str] = []
@@ -78,8 +81,8 @@ def search_code(root: Path, pattern: str, max_hits: int = 50) -> list[str]:
                     hits.append(f"{rel}:{lineno}: {line.strip()}")
                     if len(hits) >= max_hits:
                         return hits
-        except Exception as _read_err:  # noqa: BLE001
-            _ = _read_err
+        except OSError:
+            logger.debug("skipping unreadable file %s", p, exc_info=True)
     return hits
 
 

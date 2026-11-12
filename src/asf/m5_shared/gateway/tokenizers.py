@@ -17,7 +17,11 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/gateway/test_tokenizers.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/gateway/tokenizers.py` and `uv run mypy src/asf/m5_shared/gateway/tokenizers.py` are clean.
 
+import logging
+
 import tiktoken
+
+logger = logging.getLogger(__name__)
 
 
 def count_tokens(model_id: str, text: str) -> tuple[int, bool]:
@@ -28,6 +32,7 @@ def count_tokens(model_id: str, text: str) -> tuple[int, bool]:
     try:
         enc = tiktoken.encoding_for_model(model_id)
         return len(enc.encode(text)), False
-    except (KeyError, Exception):
+    except Exception:  # noqa: BLE001 - unknown model, or the vocabulary cannot be fetched offline
+        logger.debug("no tiktoken encoding for %s; using a flagged estimate", model_id, exc_info=True)
         # Flagged estimate (~4 characters per token)
         return max(1, len(text) // 4), True

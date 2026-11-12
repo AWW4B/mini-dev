@@ -26,6 +26,7 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/tools/codeexec/test_runner.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/tools/codeexec/runner.py` and `uv run mypy src/asf/m5_shared/tools/codeexec/runner.py` are clean.
 
+import logging
 import os
 import secrets
 import sys
@@ -43,6 +44,8 @@ from asf.m5_shared.tools.codeexec.channel import FramedChannel
 from asf.m5_shared.tools.codeexec.facade_gen import generate_facade
 from asf.m5_shared.tools.executor import ToolExecutor
 from asf.platform.select import get_platform
+
+logger = logging.getLogger(__name__)
 
 
 class CodeExecResult(BaseModel):
@@ -92,8 +95,8 @@ def execute_code(
         try:
             os.set_inheritable(r_child, True)
             os.set_inheritable(w_child, True)
-        except Exception as _inh_err:  # noqa: BLE001
-            _ = _inh_err
+        except OSError:
+            logger.warning("could not mark the channel descriptors inheritable", exc_info=True)
 
         parent_reader = os.fdopen(r_parent, "rb")
         parent_writer = os.fdopen(w_parent, "wb")
@@ -169,12 +172,12 @@ def execute_code(
             stop_event.set()
             try:
                 os.close(w_child)
-            except Exception as _err:  # noqa: BLE001
-                _ = _err
+            except OSError:
+                logger.debug("channel descriptor already closed", exc_info=True)
             try:
                 os.close(r_child)
-            except Exception as _err:  # noqa: BLE001
-                _ = _err
+            except OSError:
+                logger.debug("channel descriptor already closed", exc_info=True)
             server_thread.join(timeout=0.5)
             parent_channel.close()
 

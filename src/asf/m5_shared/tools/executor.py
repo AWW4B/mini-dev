@@ -30,6 +30,7 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/tools/test_executor.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/tools/executor.py` and `uv run mypy src/asf/m5_shared/tools/executor.py` are clean.
 
+import logging
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -44,6 +45,8 @@ from asf.m5_shared.metrics.collector import MetricsCollector
 from asf.m5_shared.tools.policy import PolicyEngine, Verdict
 from asf.m5_shared.tools.registry import ToolRegistry
 from asf.platform.select import get_platform
+
+logger = logging.getLogger(__name__)
 
 
 class _DelegatingTool(BaseTool):
@@ -157,7 +160,8 @@ class ToolExecutor:
             raw_res = fn(**invocation.args)
             status = "ok"
             exit_code = 0
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 - any tool failure becomes an error result for the agent
+            logger.info("tool %s failed: %s", invocation.tool, err)
             raw_res = str(err)
             status = "error"
             exit_code = 1
@@ -180,8 +184,8 @@ class ToolExecutor:
             )
             try:
                 self.collector.record_tool(tool_metric)  # type: ignore[arg-type]
-            except Exception as _coll_err:  # noqa: BLE001
-                _ = _coll_err
+            except Exception:  # noqa: BLE001 - metrics must never fail a tool call, but a lost record is logged
+                logger.warning("could not record the metric for tool %s", invocation.tool, exc_info=True)
 
         return ToolResult(
             tool=invocation.tool,

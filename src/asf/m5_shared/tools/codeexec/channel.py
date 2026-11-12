@@ -20,9 +20,12 @@
 
 import io
 import json
+import logging
 import queue
 import threading
 from typing import Any, BinaryIO
+
+logger = logging.getLogger(__name__)
 
 TOOL_REQUEST_KIND: str = "tool_request"
 TOOL_RESPONSE_KIND: str = "tool_response"
@@ -55,7 +58,8 @@ class FramedChannel:
                 if frame is None:
                     break
                 self._queue.put(frame)
-            except Exception:  # noqa: BLE001
+            except (OSError, ValueError):
+                logger.debug("channel reader stopped", exc_info=True)
                 break
 
     def send(self, kind: str, msg_id: str, body: dict[str, Any]) -> None:
@@ -97,7 +101,8 @@ class FramedChannel:
             if parsed.get("tag") != self.tag:
                 return None
             return parsed
-        except Exception:  # noqa: BLE001
+        except (ValueError, UnicodeDecodeError):
+            logger.debug("ignoring a malformed channel frame", exc_info=True)
             return None
 
     def receive(self, timeout_s: float) -> dict[str, Any] | None:
@@ -113,9 +118,9 @@ class FramedChannel:
         self._closed = True
         try:
             self.reader.close()
-        except Exception as _err:  # noqa: BLE001
-            _ = _err
+        except OSError:
+            logger.debug("channel reader already closed", exc_info=True)
         try:
             self.writer.close()
-        except Exception as _err:  # noqa: BLE001
-            _ = _err
+        except OSError:
+            logger.debug("channel writer already closed", exc_info=True)

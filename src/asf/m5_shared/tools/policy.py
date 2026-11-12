@@ -50,10 +50,7 @@ class PolicyEngine:
     policy_config: dict[str, Any]
 
     def __init__(self) -> None:
-        try:
-            self.policy_config = load_layered("policy.toml")
-        except Exception:
-            self.policy_config = {}
+        self.policy_config = load_layered("policy")  # a broken policy file raises ConfigError (fail closed)
 
     def check(
         self,

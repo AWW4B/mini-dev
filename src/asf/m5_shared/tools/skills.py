@@ -26,11 +26,14 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/tools/test_skills.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/tools/skills.py` and `uv run mypy src/asf/m5_shared/tools/skills.py` are clean.
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from asf.config.paths import AppPaths, get_paths  # noqa: F401
 from asf.contracts.tools import SkillManifest
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_skill_file(skill_path: Path) -> tuple[dict[str, Any], str, int]:
@@ -99,8 +102,8 @@ class SkillsRegistry:
                 )
                 self._manifests[name] = manifest
                 self._bodies[name] = body
-            except Exception as _err:  # noqa: BLE001
-                _ = _err
+            except Exception:  # noqa: BLE001 - one malformed skill must not hide the others
+                logger.warning("skipping skill %s: it could not be indexed", p, exc_info=True)
 
     def lookup(self, capability: str, role: str) -> list[SkillManifest]:
         cap_lower = capability.lower().strip()

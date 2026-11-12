@@ -18,6 +18,11 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/events/test_redaction.py` on Windows and Linux once src/asf/m5_shared/events/redaction.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/events/test_redaction.py` and `uv run mypy tests/m5_shared/events/test_redaction.py` are clean.
 
 
+import re
+
+import pytest
+
+import asf.m5_shared.events.redaction as redaction_mod
 from asf.m5_shared.events.redaction import redact_payload, redact_text
 
 
@@ -74,3 +79,24 @@ def test_redact_payload_meets_contract() -> None:
 
     # Idempotent
     assert redact_payload(redacted) == redacted
+
+
+def test_a_failing_redaction_withholds_the_text_instead_of_returning_the_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Exploding:
+        def sub(self, *_args: object, **_kwargs: object) -> str:
+            raise re.error("boom")
+
+    monkeypatch.setattr(redaction_mod, "_API_KEY_PATTERNS", [Exploding()])
+    sample = "token sk-abcdefghijklmnopqrstuvwxyz0123"
+    out = redact_text(sample)
+    assert "sk-" not in out
+    assert "withheld" in out or "redaction failed" in out
+
+
+def test_a_failing_payload_redaction_withholds_the_whole_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_args: object, **_kwargs: object) -> object:
+        raise re.error("boom")
+
+    monkeypatch.setattr(redaction_mod, "_redact_value", boom)
+    out = redact_payload({"note": "sk-abcdefghijklmnopqrstuvwxyz0123"})
+    assert "sk-" not in str(out)

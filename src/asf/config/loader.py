@@ -5,6 +5,7 @@
 # DOES NOT OWN: Validation (settings.py)
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/config/paths.py: AppPaths, get_paths (cross-platform base directories)
+#   - imports from src/asf/contracts/errors.py: ConfigError (invalid TOML)
 #   - called by src/asf/m5_shared/metrics/pricing.py: load_layered
 #   - called by src/asf/m5_shared/tools/policy.py: load_layered
 #   - called by src/asf/m5_shared/tools/mcp_client.py: load_layered
@@ -37,17 +38,24 @@ from typing import Any
 import tomlkit
 
 from asf.config.paths import AppPaths, get_paths
+from asf.contracts.errors import ConfigError
 
 _DEFAULTS_PACKAGE = "asf.config.defaults"
 
 
 def _read_toml_bytes(data: bytes) -> dict[str, Any]:
-    return tomllib.loads(data.decode("utf-8"))
+    try:
+        return tomllib.loads(data.decode("utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as err:
+        raise ConfigError(f"Invalid built-in configuration file: {err}") from err
 
 
 def _read_toml_file(path: Path) -> dict[str, Any]:
-    with open(path, "rb") as fh:
-        return tomllib.load(fh)
+    try:
+        with open(path, "rb") as fh:
+            return tomllib.load(fh)
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as err:
+        raise ConfigError(f"Invalid configuration file {path}: {err}. Fix or delete the file.") from err
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

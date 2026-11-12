@@ -22,10 +22,7 @@ from asf.config.loader import load_layered
 
 def price_for(provider: str, model: str, tokens_in: int, tokens_out: int) -> tuple[float, bool]:
     """Return (cost, estimated). Missing entries cost 0.0 with estimated=True."""
-    try:
-        pricing = load_layered("pricing.toml")
-    except Exception:
-        return (0.0, True)
+    pricing = load_layered("pricing")  # a corrupt user pricing file raises ConfigError instead of silently costing 0
 
     provider_dict = pricing.get(provider)
     if not isinstance(provider_dict, dict):
