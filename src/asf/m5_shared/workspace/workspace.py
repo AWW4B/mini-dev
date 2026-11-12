@@ -60,6 +60,14 @@ class Workspace:
         stderr = res.stderr.decode("utf-8", errors="replace").strip()
         return res.exit_code, stdout, stderr
 
+    def _task_worktree(self, op: WorkspaceOp) -> Path | None:
+        """The task's own worktree directory when it exists (reset and revert must act there, not on the main checkout)."""
+        if op.task_id:
+            candidate = self.repo_dir / ".worktrees" / str(op.task_id)
+            if candidate.is_dir():
+                return candidate
+        return None
+
     def _apply_unlocked(self, op: WorkspaceOp, kind_val: str) -> WorkspaceResult:
         if kind_val == "create_worktree":
             branch = op.branch or (f"task/{op.task_id}" if op.task_id else "task/worktree")
@@ -96,10 +104,13 @@ class Workspace:
             return WorkspaceResult(ok=True, commit=out if code == 0 else None)
 
         if kind_val == "revert":
-            code, out, err = self._run_git(["reset", "--hard", "HEAD"])
+            cwd = self._task_worktree(op)  # never discard changes in the main checkout when a task worktree exists
+            code, out, err = self._run_git(["reset", "--hard", "HEAD"], cwd=cwd)
             if code != 0:
                 return WorkspaceResult(ok=False, error_kind=f"revert_failed: {err}")
-            code, out, _ = self._run_git(["rev-parse", "HEAD"])
+            if cwd is not None:
+                self._run_git(["clean", "-fd"], cwd=cwd)
+            code, out, _ = self._run_git(["rev-parse", "HEAD"], cwd=cwd)
             return WorkspaceResult(ok=True, commit=out if code == 0 else None)
 
         if kind_val == "tag":
@@ -112,9 +123,12 @@ class Workspace:
 
         if kind_val == "reset_to_base":
             base = op.base_commit or "HEAD"
-            code, out, err = self._run_git(["reset", "--hard", base])
+            cwd = self._task_worktree(op)
+            code, out, err = self._run_git(["reset", "--hard", base], cwd=cwd)
             if code != 0:
                 return WorkspaceResult(ok=False, error_kind=f"reset_failed: {err}")
+            if cwd is not None:
+                self._run_git(["clean", "-fd"], cwd=cwd)  # an interrupted attempt may have left untracked files
             return WorkspaceResult(ok=True, commit=base)
 
         return WorkspaceResult(ok=False, error_kind=f"unknown_op: {kind_val}")

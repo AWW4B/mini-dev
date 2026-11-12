@@ -97,3 +97,49 @@ def test_workspace_meets_contract(tmp_path: Path) -> None:
     # 5. GC
     pruned = ws.gc()
     assert pruned >= 0
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()  # noqa: S603, S607
+
+
+def _repo(tmp_path: Path) -> Workspace:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.name", "ASF Test")
+    _git(tmp_path, "config", "user.email", "test@asf.local")
+    (tmp_path / "hello.txt").write_text("v1\n", encoding="utf-8")
+    _git(tmp_path, "add", "hello.txt")
+    _git(tmp_path, "commit", "-m", "init")
+    return Workspace(tmp_path)
+
+
+def _op(kind: str, task_id: str, **extra: object) -> SimpleNamespace:
+    return SimpleNamespace(kind=SimpleNamespace(value=kind), task_id=task_id, branch=extra.get("branch"), base_commit=extra.get("base_commit"))
+
+
+def test_reset_to_base_cleans_the_task_worktree_and_leaves_the_main_checkout_alone(tmp_path: Path) -> None:
+    ws = _repo(tmp_path)
+    created = ws.apply(_op("create_worktree", "t1", branch="task/t1", base_commit="HEAD"))  # type: ignore[arg-type]
+    assert created.ok and created.worktree_path
+    worktree = Path(created.worktree_path)
+    (worktree / "hello.txt").write_text("interrupted edit\n", encoding="utf-8")
+    (worktree / "stray.txt").write_text("untracked\n", encoding="utf-8")
+    (tmp_path / "hello.txt").write_text("uncommitted work in the main checkout\n", encoding="utf-8")
+
+    result = ws.apply(_op("reset_to_base", "t1"))  # type: ignore[arg-type]
+
+    assert result.ok
+    assert (worktree / "hello.txt").read_text(encoding="utf-8") == "v1\n"
+    assert not (worktree / "stray.txt").exists()
+    assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "uncommitted work in the main checkout\n"
+
+
+def test_revert_acts_on_the_task_worktree_too(tmp_path: Path) -> None:
+    ws = _repo(tmp_path)
+    created = ws.apply(_op("create_worktree", "t2", branch="task/t2", base_commit="HEAD"))  # type: ignore[arg-type]
+    worktree = Path(str(created.worktree_path))
+    (worktree / "hello.txt").write_text("bad edit\n", encoding="utf-8")
+    (tmp_path / "hello.txt").write_text("main edit\n", encoding="utf-8")
+    assert ws.apply(_op("revert", "t2")).ok  # type: ignore[arg-type]
+    assert (worktree / "hello.txt").read_text(encoding="utf-8") == "v1\n"
+    assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "main edit\n"
