@@ -12,6 +12,7 @@
 #   - called by src/asf/platform/sandbox_srt.py: PlatformAdapter, SandboxBackend, SandboxSpec, ProcessResult
 #   - called by src/asf/platform/sandbox_jobobject.py: PlatformAdapter, SandboxBackend, SandboxSpec, ProcessResult
 #   - called by src/asf/platform/select.py: PlatformAdapter, SandboxBackend, SandboxSpec, ProcessResult
+#   - called by src/asf/m2_request/repository_intake.py: SandboxSpec
 #   - called by tests/platform/test_base.py: SandboxSpec, ProcessResult, SandboxBackend, PlatformAdapter
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):

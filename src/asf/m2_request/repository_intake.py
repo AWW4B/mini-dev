@@ -8,6 +8,7 @@
 #   - imports from src/asf/m5_shared/workspace/workspace.py: Workspace (IF-15 git operations)
 #   - imports from src/asf/m5_shared/context/repo_index.py: RepoIndex (static index)
 #   - imports from src/asf/platform/select.py: get_platform (platform adapter)
+#   - imports from src/asf/platform/base.py: SandboxSpec (sandboxed baseline run)
 #   - imports from src/asf/config/loader.py: load_layered (intake_rules.toml)
 #   - called by src/asf/m2_request/pipeline.py: intake_repository
 #   - called by tests/m2_request/test_repository_intake.py: intake_repository
@@ -26,6 +27,8 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m2_request/test_repository_intake.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m2_request/repository_intake.py` and `uv run mypy src/asf/m2_request/repository_intake.py` are clean.
 
+import logging
+import os
 import sys
 from pathlib import Path
 
@@ -33,7 +36,56 @@ from asf.config.loader import load_layered
 from asf.contracts.requests import RepoProfile
 from asf.m5_shared.context.repo_index import RepoIndex
 from asf.m5_shared.workspace.workspace import Workspace  # noqa: F401
+from asf.platform.base import SandboxSpec
 from asf.platform.select import get_platform
+
+logger = logging.getLogger(__name__)
+
+_SKIP_DIRS = frozenset({".git", ".venv", "venv", "__pycache__", "node_modules", ".mypy_cache", ".ruff_cache", ".pytest_cache", "dist", "build"})
+_LANGUAGE_BY_SUFFIX = {
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".rs": "rust",
+}
+_BASELINE_TIMEOUT_S = 30
+
+
+def _detect_languages(repo_path: Path) -> list[str]:
+    """Languages by file suffix; skipped directories are pruned before they are walked."""
+    found: set[str] = set()
+    for _dirpath, dirnames, filenames in os.walk(repo_path):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        for name in filenames:
+            language = _LANGUAGE_BY_SUFFIX.get(Path(name).suffix)
+            if language is not None:
+                found.add(language)
+    return sorted(found)
+
+
+def _run_baseline(repo_path: Path, test_command: list[str]) -> tuple[list[str], list[str]]:
+    """Run the baseline tests in a real sandbox (tier A); without one the repository's code is not executed."""
+    backend = get_platform().sandbox()
+    tier = getattr(backend.tier, "value", backend.tier)
+    if tier != "A" or not backend.available():
+        logger.warning("baseline tests not run: no tier-A sandbox available (tier %s); the repository's code is not executed unsandboxed", tier)
+        return [], []
+    spec = SandboxSpec(
+        argv=test_command,
+        cwd=repo_path,
+        writable_paths=[repo_path],
+        readable_paths=[repo_path],
+        network=False,
+        timeout_s=_BASELINE_TIMEOUT_S,
+    )
+    result = backend.run(spec)
+    if result.timed_out:
+        return [], ["baseline_timeout"]
+    if result.exit_code == 0:
+        return ["all_tests"], []
+    return [], ["some_tests_failed"]
 
 
 def intake_repository(repo_ref: str, project_id: str) -> RepoProfile:
@@ -48,30 +100,12 @@ def intake_repository(repo_ref: str, project_id: str) -> RepoProfile:
             supported=False,
         )
 
-    # 1. Load intake rules
-    try:
-        rules = load_layered("intake_rules")
-    except Exception:  # noqa: BLE001
-        rules = {}
+    # 1. Intake rules (a corrupt config file raises ConfigError instead of being ignored)
+    rules = load_layered("intake_rules")
     supported_langs = list(rules.get("supported_languages", ["python"]))
 
     # 2. Detect languages
-    detected_langs: set[str] = set()
-    for p in repo_path.rglob("*"):
-        if not p.is_file():
-            continue
-        if any(part in {".git", ".venv", "__pycache__", "node_modules"} for part in p.parts):
-            continue
-        if p.suffix == ".py":
-            detected_langs.add("python")
-        elif p.suffix in {".js", ".jsx"}:
-            detected_langs.add("javascript")
-        elif p.suffix in {".ts", ".tsx"}:
-            detected_langs.add("typescript")
-        elif p.suffix == ".rs":
-            detected_langs.add("rust")
-
-    languages = sorted(detected_langs)
+    languages = _detect_languages(repo_path)
     supported = any(lang in supported_langs for lang in languages) if languages else True
 
     # 3. Detect build & test commands
@@ -93,20 +127,7 @@ def intake_repository(repo_ref: str, project_id: str) -> RepoProfile:
     index_ref = f"index:{project_id}"
 
     # 5. Baseline test run
-    baseline_passed: list[str] = []
-    baseline_failed: list[str] = []
-
-    if test_commands:
-        platform = get_platform()
-        try:
-            res = platform.run_process(test_commands[0], cwd=repo_path, timeout_s=30)
-            if res.exit_code == 0:
-                baseline_passed.append("all_tests")
-            else:
-                baseline_failed.append("some_tests_failed")
-        except Exception as _run_err:  # noqa: BLE001
-            _ = _run_err
-            baseline_failed.append("baseline_execution_error")
+    baseline_passed, baseline_failed = _run_baseline(repo_path, test_commands[0]) if test_commands else ([], [])
 
     return RepoProfile(
         languages=languages,
