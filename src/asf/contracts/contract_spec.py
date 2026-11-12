@@ -13,6 +13,7 @@
 #   - called by src/asf/m4_execution/verification/gate.py: ContractStatus
 #   - called by src/asf/m4_execution/integration/integrator.py: ContractStatus
 #   - called by src/asf/m3_orchestration/planning/planner_graph.py: ContractSpec
+#   - called by src/asf/m3_orchestration/decomposition/leaf_certifier.py: ContractCapsule, ContractQuery
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

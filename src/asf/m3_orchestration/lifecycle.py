@@ -8,6 +8,7 @@
 #   - imports from src/asf/contracts/errors.py: StateConflict (illegal transitions)
 #   - called by src/asf/m3_orchestration/decomposition/decomposition_graph.py: transition
 #   - called by tests/m3_orchestration/test_lifecycle.py: transition, ALLOWED_TRANSITIONS, MAX_ATTEMPTS
+#   - called by src/asf/m3_orchestration/decomposition/frontier.py: transition
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

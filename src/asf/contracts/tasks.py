@@ -26,6 +26,13 @@
 #   - called by tests/m3_orchestration/test_lifecycle.py: TaskNode, TaskState
 #   - called by src/asf/m3_orchestration/planning/planner_graph.py: TaskNode
 #   - called by tests/m3_orchestration/planning/test_test_authoring.py: TaskNode
+#   - called by src/asf/m3_orchestration/decomposition/decomposition_graph.py: TaskNode, TaskState
+#   - called by tests/m3_orchestration/decomposition/test_sizer.py: TaskNode
+#   - called by tests/m3_orchestration/decomposition/test_rubric.py: TaskNode
+#   - called by tests/m3_orchestration/decomposition/test_splitter.py: TaskNode
+#   - called by tests/m3_orchestration/decomposition/test_split_validator.py: TaskNode
+#   - called by tests/m3_orchestration/decomposition/test_leaf_certifier.py: TaskNode
+#   - called by tests/m3_orchestration/decomposition/test_frontier.py: TaskNode
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
