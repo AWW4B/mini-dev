@@ -51,7 +51,7 @@ class DecisionBroker:
         now_iso = datetime.now(UTC).isoformat()
         with self.store.conn:
             self.store.conn.execute(
-                "INSERT OR REPLACE INTO decisions (decision_id, run_id, task_id, topic, status, version, "
+                "INSERT OR IGNORE INTO decisions (decision_id, run_id, task_id, topic, status, version, "
                 "payload, created_at) VALUES (?, ?, ?, ?, 'PENDING', 1, ?, ?)",
                 (req.decision_id, req.run_id, req.task_id, topic, payload_str, now_iso),
             )
@@ -65,6 +65,8 @@ class DecisionBroker:
         row = cur.fetchone()
         if row is None:
             raise KeyError(f"Decision not found: {answer.decision_id}")
+        if row["status"] == "RESOLVED":
+            return  # at-least-once delivery: answering twice is harmless and must not overwrite the first answer
 
         req_data = json.loads(row["payload"])
         req = DecisionRequest.model_validate(req_data)

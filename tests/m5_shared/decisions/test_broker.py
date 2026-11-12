@@ -17,6 +17,7 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/decisions/test_broker.py` on Windows and Linux once src/asf/m5_shared/decisions/broker.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/decisions/test_broker.py` and `uv run mypy tests/m5_shared/decisions/test_broker.py` are clean.
 
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -154,3 +155,68 @@ def test_decision_broker_meets_contract(tmp_path: Path) -> None:
     assert len(broker.pending()) == 0
 
     conn.close()
+
+
+def _real_request(decision_id: str = "dec-x") -> SimpleNamespace:
+    return SimpleNamespace(
+        decision_id=decision_id,
+        run_id="run-1",
+        task_id=None,
+        kind=SimpleNamespace(value="clarify"),
+        requester="m2",
+        question="Pick one",
+        options=["a", "b"],
+        default_on_timeout=None,
+        deadline=None,
+        evidence_refs=[],
+        model_dump_json=lambda: json.dumps(
+            {
+                "decision_id": decision_id, "run_id": "run-1", "task_id": None, "kind": "clarify", "requester": "m2",
+                "question": "Pick one", "options": ["a", "b"], "default_on_timeout": None, "deadline": None, "evidence_refs": [],
+            }
+        ),
+    )
+
+
+def _broker(tmp_path: Path) -> tuple[DecisionBroker, sqlite3.Connection]:
+    conn = sqlite3.connect(str(tmp_path / "d.db"))
+    conn.row_factory = sqlite3.Row
+    _create_decisions_table(conn)
+    return DecisionBroker(store=SimpleNamespace(conn=conn)), conn  # type: ignore[arg-type]
+
+
+def _answer(decision_id: str, choice: str) -> SimpleNamespace:
+    now = datetime.now(UTC)
+    return SimpleNamespace(
+        decision_id=decision_id, choice=choice, text=None, answered_by="user", answered_at=now, applied_default=False,
+        model_dump=lambda mode="python": {
+            "decision_id": decision_id, "choice": choice, "text": None, "answered_by": "user",
+            "answered_at": now.isoformat(), "applied_default": False,
+        },
+    )
+
+
+def test_requesting_the_same_decision_again_does_not_reopen_a_resolved_one(tmp_path: Path) -> None:
+    broker, conn = _broker(tmp_path)
+    broker.request(_real_request())  # type: ignore[arg-type]
+    broker.resolve(_answer("dec-x", "a"))  # type: ignore[arg-type]
+    # a graph node re-running after interrupt() requests the same decision again
+    broker.request(_real_request())  # type: ignore[arg-type]
+    status = conn.execute("SELECT status FROM decisions WHERE decision_id = 'dec-x'").fetchone()["status"]
+    assert status == "RESOLVED"
+    assert broker.pending() == []
+
+
+def test_resolving_twice_keeps_the_first_answer_and_does_not_crash(tmp_path: Path) -> None:
+    broker, conn = _broker(tmp_path)
+    broker.request(_real_request())  # type: ignore[arg-type]
+    broker.resolve(_answer("dec-x", "a"))  # type: ignore[arg-type]
+    broker.resolve(_answer("dec-x", "b"))  # type: ignore[arg-type]
+    stored = json.loads(conn.execute("SELECT payload FROM decisions WHERE decision_id = 'dec-x'").fetchone()["payload"])
+    assert stored["resolution"]["choice"] == "a"
+
+
+def test_resolving_an_unknown_decision_is_an_error(tmp_path: Path) -> None:
+    broker, _ = _broker(tmp_path)
+    with pytest.raises(KeyError):
+        broker.resolve(_answer("missing", "a"))  # type: ignore[arg-type]
