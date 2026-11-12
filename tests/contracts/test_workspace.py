@@ -18,17 +18,41 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/contracts/test_workspace.py` on Windows and Linux once src/asf/contracts/workspace.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/contracts/test_workspace.py` and `uv run mypy tests/contracts/test_workspace.py` are clean.
 
 
-from asf.contracts.workspace import WorkspaceOp, WorkspaceOpKind, WorkspaceResult  # noqa: F401
+
+import pytest
+from pydantic import ValidationError
+
+from asf.contracts.workspace import WorkspaceOp, WorkspaceOpKind, WorkspaceResult
 
 
-def test_workspace_op_kind_meets_contract() -> None:
-    """Prove WorkspaceOpKind behaves as declared in src/asf/contracts/workspace.py."""
-    raise NotImplementedError("write this test before implementing WorkspaceOpKind")
+def test_operation_kinds() -> None:
+    assert {k.value for k in WorkspaceOpKind} == {"create_worktree", "diff", "merge", "revert", "tag", "reset_to_base"}
 
-def test_workspace_op_meets_contract() -> None:
-    """Prove WorkspaceOp behaves as declared in src/asf/contracts/workspace.py."""
-    raise NotImplementedError("write this test before implementing WorkspaceOp")
 
-def test_workspace_result_meets_contract() -> None:
-    """Prove WorkspaceResult behaves as declared in src/asf/contracts/workspace.py."""
-    raise NotImplementedError("write this test before implementing WorkspaceResult")
+def test_operation_only_requires_a_kind() -> None:
+    op = WorkspaceOp.model_validate({"kind": "diff"})
+    assert op.task_id is None and op.branch is None and op.base_commit is None
+    with pytest.raises(ValidationError):
+        WorkspaceOp.model_validate({})
+
+
+def test_operation_rejects_unknown_kind() -> None:
+    with pytest.raises(ValidationError):
+        WorkspaceOp.model_validate({"kind": "rebase"})
+
+
+def test_operation_round_trip() -> None:
+    op = WorkspaceOp.model_validate({"kind": "create_worktree", "task_id": "t1", "branch": "task/t1", "base_commit": "abc"})
+    assert WorkspaceOp.model_validate_json(op.model_dump_json()) == op
+
+
+def test_result_defaults_everything_but_the_verdict() -> None:
+    res = WorkspaceResult.model_validate({"ok": True})
+    assert res.commit is None and res.diff_ref is None and res.worktree_path is None and res.error_kind is None
+    with pytest.raises(ValidationError):
+        WorkspaceResult.model_validate({})
+
+
+def test_failed_result_carries_an_error_kind() -> None:
+    res = WorkspaceResult.model_validate({"ok": False, "error_kind": "merge_conflict"})
+    assert res.ok is False and res.error_kind == "merge_conflict"
