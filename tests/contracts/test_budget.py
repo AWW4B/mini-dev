@@ -18,9 +18,56 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/contracts/test_budget.py` on Windows and Linux once src/asf/contracts/budget.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/contracts/test_budget.py` and `uv run mypy tests/contracts/test_budget.py` are clean.
 
 
-from asf.contracts.budget import RunBudget  # noqa: F401
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from asf.contracts.budget import RunBudget
 
 
-def test_run_budget_meets_contract() -> None:
-    """Prove RunBudget behaves as declared in src/asf/contracts/budget.py."""
-    raise NotImplementedError("write this test before implementing RunBudget")
+def _valid() -> dict[str, Any]:
+    return {
+        "run_id": "run_1",
+        "max_remote_tokens": 1000,
+        "max_local_tokens": 5000,
+        "max_api_spend": 2.5,
+        "max_wall_clock_s": 3600,
+        "max_task_nodes": 50,
+    }
+
+
+def test_usage_counters_and_alert_fraction_have_defaults() -> None:
+    budget = RunBudget.model_validate(_valid())
+    assert budget.used_remote_tokens == 0
+    assert budget.used_local_tokens == 0
+    assert budget.used_api_spend == 0.0
+    assert budget.used_task_nodes == 0
+    assert budget.alert_fraction == 0.8
+
+
+@pytest.mark.parametrize("missing", sorted(_valid()))
+def test_every_limit_and_the_run_id_are_required(missing: str) -> None:
+    data = _valid()
+    del data[missing]
+    with pytest.raises(ValidationError):
+        RunBudget.model_validate(data)
+
+
+def test_non_numeric_limit_is_rejected() -> None:
+    data = _valid()
+    data["max_remote_tokens"] = "lots"
+    with pytest.raises(ValidationError):
+        RunBudget.model_validate(data)
+
+
+def test_usage_counts_independently_per_instance() -> None:
+    a = RunBudget.model_validate(_valid())
+    b = RunBudget.model_validate(_valid())
+    a.used_remote_tokens += 10
+    assert b.used_remote_tokens == 0
+
+
+def test_json_round_trip_is_lossless() -> None:
+    budget = RunBudget.model_validate({**_valid(), "used_api_spend": 0.25, "alert_fraction": 0.5})
+    assert RunBudget.model_validate_json(budget.model_dump_json()) == budget
