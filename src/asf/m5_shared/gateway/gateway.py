@@ -35,6 +35,7 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/gateway/test_gateway.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/gateway/gateway.py` and `uv run mypy src/asf/m5_shared/gateway/gateway.py` are clean.
 
+import logging
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,8 @@ from asf.contracts.errors import BudgetExceeded, ProviderUnavailable
 from asf.contracts.models import ModelRole
 from asf.m5_shared.gateway.providers import RouteConfig, build_chat_model
 from asf.m5_shared.gateway.usage_callback import UsageCallbackHandler
+
+logger = logging.getLogger(__name__)
 
 
 class ModelGateway:
@@ -68,7 +71,8 @@ class ModelGateway:
             try:
                 with open(cfg_path, "rb") as fh:
                     data = tomllib.load(fh)
-            except Exception:
+            except (OSError, tomllib.TOMLDecodeError):
+                logger.warning("could not read the model profile file %s; using the built-in profile", cfg_path, exc_info=True)
                 data = {}
 
         profiles = data.get("profiles", {})
@@ -177,7 +181,8 @@ class ModelGateway:
                     runnable = base_model.with_structured_output(output_schema, method="json_schema").with_retry(
                         stop_after_attempt=3
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001 - the provider rejects strict json_schema output: use its default mode
+                    logger.debug("json_schema structured output unsupported by %s; using the default method", provider, exc_info=True)
                     runnable = base_model.with_structured_output(output_schema).with_retry(stop_after_attempt=3)
 
         if fallbacks:
@@ -191,8 +196,8 @@ class ModelGateway:
                     else:
                         fb_runnable = fb_chat.with_retry(stop_after_attempt=3)
                     fallback_models.append(fb_runnable)
-                except Exception as _fb_err:  # noqa: BLE001
-                    _ = _fb_err
+                except Exception:  # noqa: BLE001 - one unusable fallback route must not break the primary route
+                    logger.warning("fallback route %s is unavailable and was skipped", fb_provider, exc_info=True)
             if fallback_models:
                 runnable = runnable.with_fallbacks(fallback_models)
 

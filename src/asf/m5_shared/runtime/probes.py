@@ -22,9 +22,13 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/runtime/test_probes.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/runtime/probes.py` and `uv run mypy src/asf/m5_shared/runtime/probes.py` are clean.
 
+import logging
+
 import psutil
 import pynvml  # type: ignore[import-untyped]
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class ResourceReading(BaseModel):
@@ -56,10 +60,10 @@ class ResourceProbe:
             finally:
                 try:
                     pynvml.nvmlShutdown()
-                except Exception as _shut_err:  # noqa: BLE001
-                    _ = _shut_err
-        except Exception as _err:  # noqa: BLE001
-            _ = _err
+                except Exception:  # noqa: BLE001 - NVML shutdown errors are not actionable
+                    logger.debug("nvmlShutdown failed", exc_info=True)
+        except Exception:  # noqa: BLE001 - no NVIDIA GPU or driver is the normal case: readings are flagged unmeasured
+            logger.debug("GPU probe unavailable; VRAM and utilisation are not measured", exc_info=True)
 
         return ResourceReading(
             ram_free_mb=ram_free_mb,
