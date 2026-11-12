@@ -10,6 +10,7 @@
 #   - called by src/asf/m5_shared/registry/capsules.py: ContractSpec, ContractCapsule
 #   - called by src/asf/m5_shared/registry/registry.py: ContractSpec, ContractCapsule, ContractQuery, ContractStatus
 #   - called by tests/contracts/test_contract_spec.py: ContractStatus, Operation, ContractSpec, ContractCapsule, ContractQuery
+#   - called by src/asf/m4_execution/verification/gate.py: ContractStatus
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

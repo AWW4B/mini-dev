@@ -19,7 +19,35 @@
 
 from asf.contracts.tasks import TaskNode
 
+MAX_REPAIR_ROUNDS = 2
+
 
 def make_repair_task(parent: TaskNode, failure_ref: str, round_no: int) -> TaskNode | None:
-    """Return a REPAIR node, or None when repair rounds are exhausted."""
-    raise NotImplementedError
+    """Return a REPAIR node, or None when repair rounds are exhausted.
+
+    ``round_no`` is the number of repair rounds already spent on ``parent`` (0 for the first failure).
+    The repair is a bounded patch: the parent's files and contracts, the failing tests as its only acceptance.
+    """
+    if round_no < 0:
+        raise ValueError("round_no must be >= 0")
+    if round_no >= MAX_REPAIR_ROUNDS:
+        return None
+    attempt = round_no + 1
+    return TaskNode.model_validate(
+        {
+            "id": f"{parent.id}-repair-{attempt}",
+            "run_id": parent.run_id,
+            "parent_id": parent.id,
+            "kind": "repair",
+            "goal": f"Repair the failing integration of '{parent.goal}': patch only; the failing tests in {failure_ref} are the acceptance criteria",
+            "acceptance_refs": [failure_ref],
+            "contract_refs": list(parent.contract_refs),
+            "deps": [],
+            "allowed_files": list(parent.allowed_files),
+            "priority": parent.priority + 1,  # repairs run before the work that is waiting on them
+            "state": "PROPOSED",
+            "depth": parent.depth + 1,
+            "counters": {"repair_rounds": attempt},
+            "idempotency_key": f"repair:{parent.id}:{attempt}",
+        }
+    )

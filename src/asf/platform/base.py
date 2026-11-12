@@ -14,6 +14,7 @@
 #   - called by src/asf/platform/select.py: PlatformAdapter, SandboxBackend, SandboxSpec, ProcessResult
 #   - called by src/asf/m2_request/repository_intake.py: SandboxSpec
 #   - called by tests/platform/test_base.py: SandboxSpec, ProcessResult, SandboxBackend, PlatformAdapter
+#   - called by src/asf/m4_execution/verification/gate.py: ProcessResult, SandboxSpec
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
