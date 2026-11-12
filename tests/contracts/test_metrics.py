@@ -18,29 +18,74 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/contracts/test_metrics.py` on Windows and Linux once src/asf/contracts/metrics.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/contracts/test_metrics.py` and `uv run mypy tests/contracts/test_metrics.py` are clean.
 
 
-from asf.contracts.metrics import CallMetric, LimitEvent, MetricsSnapshot, ResourceAdvisory, ToolMetric, ValueSource  # noqa: F401
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from asf.contracts.metrics import CallMetric, LimitEvent, MetricsSnapshot, ResourceAdvisory, ToolMetric, ValueSource
 
 
-def test_value_source_meets_contract() -> None:
-    """Prove ValueSource behaves as declared in src/asf/contracts/metrics.py."""
-    raise NotImplementedError("write this test before implementing ValueSource")
+def _call(**over: Any) -> dict[str, Any]:
+    return {
+        "run_id": "r1", "task_id": None, "role": "worker", "provider": "local", "model": "m", "strategy": "tool_loop",
+        "tokens_in": 10, "tokens_out": 5, "latency_ms": 120, "cost": 0.0, "source": "MEASURED", **over,
+    }
 
-def test_call_metric_meets_contract() -> None:
-    """Prove CallMetric behaves as declared in src/asf/contracts/metrics.py."""
-    raise NotImplementedError("write this test before implementing CallMetric")
 
-def test_tool_metric_meets_contract() -> None:
-    """Prove ToolMetric behaves as declared in src/asf/contracts/metrics.py."""
-    raise NotImplementedError("write this test before implementing ToolMetric")
+def test_value_source_values() -> None:
+    assert {v.value for v in ValueSource} == {"MEASURED", "ESTIMATED"}
 
-def test_limit_event_meets_contract() -> None:
-    """Prove LimitEvent behaves as declared in src/asf/contracts/metrics.py."""
-    raise NotImplementedError("write this test before implementing LimitEvent")
 
-def test_metrics_snapshot_meets_contract() -> None:
-    """Prove MetricsSnapshot behaves as declared in src/asf/contracts/metrics.py."""
-    raise NotImplementedError("write this test before implementing MetricsSnapshot")
+def test_call_metric_defaults_and_nullable_task_id() -> None:
+    m = CallMetric.model_validate(_call())
+    assert m.retry_no == 0
+    assert m.task_id is None
+    assert CallMetric.model_validate(_call(task_id="t1")).task_id == "t1"
 
-def test_resource_advisory_meets_contract() -> None:
-    """Prove ResourceAdvisory behaves as declared in src/asf/contracts/metrics.py."""
-    raise NotImplementedError("write this test before implementing ResourceAdvisory")
+
+def test_call_metric_rejects_unknown_source_and_missing_fields() -> None:
+    with pytest.raises(ValidationError):
+        CallMetric.model_validate(_call(source="GUESSED"))
+    data = _call()
+    del data["latency_ms"]
+    with pytest.raises(ValidationError):
+        CallMetric.model_validate(data)
+
+
+def test_call_metric_round_trip() -> None:
+    m = CallMetric.model_validate(_call(cost=0.12, source="ESTIMATED", retry_no=2))
+    assert CallMetric.model_validate_json(m.model_dump_json()) == m
+
+
+def test_tool_metric_requires_all_fields() -> None:
+    data = {
+        "run_id": "r1", "task_id": "t1", "tool": "read_file", "strategy": "code_exec",
+        "duration_ms": 4, "exit_status": "ok", "approval": "auto", "sandbox_tier": "A",
+    }
+    assert ToolMetric.model_validate(data).strategy == "code_exec"
+    for missing in data:
+        partial = dict(data)
+        del partial[missing]
+        with pytest.raises(ValidationError):
+            ToolMetric.model_validate(partial)
+
+
+def test_limit_event() -> None:
+    ev = LimitEvent.model_validate({"run_id": "r1", "kind": "budget", "detail": "tokens"})
+    assert ev.kind == "budget"
+    with pytest.raises(ValidationError):
+        LimitEvent.model_validate({"run_id": "r1", "kind": "budget"})
+
+
+def test_snapshot_defaults_and_values_keep_their_source() -> None:
+    snap = MetricsSnapshot.model_validate({"run_id": None, "values": {"tokens": 5.0}, "sources": {"tokens": "MEASURED"}})
+    assert snap.advisories == []
+    assert snap.sources["tokens"] is ValueSource.MEASURED
+    assert MetricsSnapshot.model_validate_json(snap.model_dump_json()) == snap
+
+
+def test_resource_advisory_defaults() -> None:
+    adv = ResourceAdvisory.model_validate({"kind": "vram", "severity": "soft", "detail": "low"})
+    assert adv.max_slots is None
+    assert ResourceAdvisory.model_validate({"kind": "vram", "severity": "hard", "detail": "x", "max_slots": 1}).max_slots == 1
