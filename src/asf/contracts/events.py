@@ -14,6 +14,7 @@
 #   - called by src/asf/m2_request/intake_router.py: EventEnvelope, EventKind
 #   - called by src/asf/m5_shared/state_store/outbox.py: EventEnvelope
 #   - called by tests/contracts/test_events.py: EventKind, Visibility, Actor, EventEnvelope, TaskReceivedPayload, StepStartedPayload, ToolCalledPayload, ToolResultPayload, HandoffPayload, GateResultPayload, DecisionNeededPayload
+#   - called by tests/cli/views/test_trace_view.py: EventEnvelope
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

@@ -9,6 +9,10 @@
 #   - imports from src/asf/m5_shared/state_store/store.py: StateStore (the project's state.db)
 #   - called by tests/cli/test_context.py: EXIT_OK, EXIT_USER, EXIT_ENV, project_root, state_db, open_store, renderer_for, latest_run_id, resolve_run_id
 #   - called by src/asf/cli/run_controls.py: open_store
+#   - called by src/asf/cli/views/task_tree_view.py: open_store, resolve_run_id
+#   - called by src/asf/cli/views/inbox_view.py: open_store, resolve_run_id
+#   - called by src/asf/cli/views/trace_view.py: open_store, resolve_run_id
+#   - called by src/asf/cli/views/dash_view.py: open_store, resolve_run_id
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

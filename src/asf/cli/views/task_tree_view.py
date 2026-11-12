@@ -6,6 +6,8 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/contracts/tasks.py: TaskNode (nodes)
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
+#   - imports from src/asf/cli/context.py: open_store, resolve_run_id (the project's store and the default run)
+#   - imports from src/asf/m5_shared/state_store/store.py: StateStore (read-only queries)
 #   - called by src/asf/cli/commands/tasks.py: TaskTreeView
 #   - called by tests/cli/views/test_task_tree_view.py: TaskTreeView
 #   - emits/consumes: none
@@ -20,16 +22,69 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/cli/views/test_task_tree_view.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/cli/views/task_tree_view.py` and `uv run mypy src/asf/cli/views/task_tree_view.py` are clean.
 
+import json
+import time
+from collections.abc import Callable
 from typing import Any
+
+from asf.cli.context import open_store, resolve_run_id
+from asf.contracts.tasks import TaskNode
+from asf.m5_shared.state_store.store import StateStore
+
+
+def _node_label(node: TaskNode) -> str:
+    c = node.counters
+    counters = f"attempts {c.attempts}/3" + (f", splits {c.split_attempts}" if c.split_attempts else "") + (f", repairs {c.repair_rounds}" if c.repair_rounds else "")
+    return f"{node.id}: {node.goal[:70]} ({counters})"
 
 
 class TaskTreeView:
-    def __init__(self, renderer: Any, run_id: str | None) -> None:
-        raise NotImplementedError
+    """The task tree of a run: node states, attempts and counters (read-only)."""
+
+    def __init__(
+        self,
+        renderer: Any,
+        run_id: str | None,
+        *,
+        store: StateStore | None = None,
+        interval_s: float = 2.0,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.renderer = renderer
+        self.run_id = run_id
+        self._store = store
+        self._interval_s = interval_s
+        self._sleep = sleep
+
+    def build(self) -> tuple[str, list[dict[str, Any]]]:
+        store = self._store if self._store is not None else open_store(readonly=True)
+        run_id = resolve_run_id(store, self.run_id)
+        rows = store.conn.execute(
+            "SELECT payload FROM tasks WHERE run_id = ? OR run_id LIKE ? ORDER BY rowid", (run_id, f"{run_id}-%")
+        ).fetchall()
+        nodes = {}
+        for row in rows:
+            node = TaskNode.model_validate(json.loads(row["payload"]))
+            nodes[str(node.id)] = node
+        children: dict[str, list[dict[str, Any]]] = {}
+        entries: dict[str, dict[str, Any]] = {}
+        for node_id, node in nodes.items():
+            entries[node_id] = {"label": _node_label(node), "state": node.state.value, "children": children.setdefault(node_id, [])}
+        roots: list[dict[str, Any]] = []
+        for node_id, node in nodes.items():
+            parent = str(node.parent_id) if node.parent_id is not None else None
+            (children.setdefault(parent, []) if parent in nodes else roots).append(entries[node_id])
+        return run_id, roots
 
     def render_once(self) -> None:
-        raise NotImplementedError
+        run_id, roots = self.build()
+        self.renderer.tree(f"Tasks of run {run_id}", roots)
 
     def live(self) -> None:
         """Refresh until Ctrl+C (which only exits the view)."""
-        raise NotImplementedError
+        try:
+            while True:
+                self.render_once()
+                self._sleep(self._interval_s)
+        except KeyboardInterrupt:
+            self.renderer.message("view closed (the run keeps going)")

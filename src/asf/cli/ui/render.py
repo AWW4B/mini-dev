@@ -27,6 +27,10 @@
 #   - called by src/asf/cli/views/task_tree_view.py: OutputMode, Renderer
 #   - called by tests/cli/ui/test_render.py: OutputMode, Renderer
 #   - called by src/asf/cli/context.py: OutputMode, Renderer
+#   - called by tests/cli/views/test_task_tree_view.py: OutputMode, Renderer
+#   - called by tests/cli/views/test_inbox_view.py: OutputMode, Renderer
+#   - called by tests/cli/views/test_trace_view.py: OutputMode, Renderer
+#   - called by tests/cli/views/test_dash_view.py: OutputMode, Renderer
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
