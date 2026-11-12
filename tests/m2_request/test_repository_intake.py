@@ -21,6 +21,9 @@
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+import asf.m2_request.repository_intake as intake_mod
 from asf.m2_request.repository_intake import intake_repository
 
 
@@ -54,3 +57,91 @@ def test_intake_repository_meets_contract(tmp_path: Path, fake_paths: Any) -> No
     assert len(profile.test_commands) >= 1
     assert profile.supported is True
     assert profile.index_ref is not None
+
+
+def test_detection_ignores_vendored_directories(tmp_path: Path, fake_paths: Any) -> None:
+    _ = fake_paths
+    (tmp_path / "app.rs").write_text("fn main() {}\n", encoding="utf-8")
+    vendored = tmp_path / "node_modules" / "dep"
+    vendored.mkdir(parents=True)
+    (vendored / "index.js").write_text("module.exports = 1;\n", encoding="utf-8")
+    venv = tmp_path / ".venv" / "lib"
+    venv.mkdir(parents=True)
+    (venv / "x.py").write_text("x = 1\n", encoding="utf-8")
+
+    profile = intake_repository(str(tmp_path), project_id="p")
+    assert profile.languages == ["rust"]
+
+
+def test_missing_repository_is_reported_unsupported(tmp_path: Path, fake_paths: Any) -> None:
+    _ = fake_paths
+    profile = intake_repository(str(tmp_path / "nope"), project_id="p")
+    assert profile.supported is False
+    assert profile.languages == [] and profile.test_commands == []
+
+
+def test_baseline_tests_do_not_run_without_a_real_sandbox(
+    tmp_path: Path, fake_paths: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ = fake_paths
+    marker = tmp_path / "ran.txt"
+    (tmp_path / "test_marker.py").write_text(
+        f"from pathlib import Path\n\ndef test_x() -> None:\n    Path({str(marker)!r}).write_text('ran', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    class _NoSandbox:
+        tier = "C"
+
+        def available(self) -> bool:
+            return False
+
+        def run(self, spec: Any) -> Any:
+            raise AssertionError("the repository must not be executed without a tier-A sandbox")
+
+    class _Platform:
+        def sandbox(self) -> _NoSandbox:
+            return _NoSandbox()
+
+    monkeypatch.setattr(intake_mod, "get_platform", lambda: _Platform())
+    profile = intake_repository(str(tmp_path), project_id="p")
+    assert profile.test_commands
+    assert profile.baseline_passed == [] and profile.baseline_failed == []
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "timed_out", "passed", "failed"),
+    [(0, False, ["all_tests"], []), (1, False, [], ["some_tests_failed"]), (-9, True, [], ["baseline_timeout"])],
+)
+def test_baseline_result_comes_from_the_sandbox_run(
+    tmp_path: Path, fake_paths: Any, monkeypatch: pytest.MonkeyPatch, exit_code: int, timed_out: bool, passed: list[str], failed: list[str]
+) -> None:
+    _ = fake_paths
+    (tmp_path / "test_ok.py").write_text("def test_ok() -> None:\n    pass\n", encoding="utf-8")
+    seen: list[Any] = []
+
+    class _Result:
+        def __init__(self) -> None:
+            self.exit_code = exit_code
+            self.timed_out = timed_out
+
+    class _Sandbox:
+        tier = "A"
+
+        def available(self) -> bool:
+            return True
+
+        def run(self, spec: Any) -> Any:
+            seen.append(spec)
+            return _Result()
+
+    class _Platform:
+        def sandbox(self) -> _Sandbox:
+            return _Sandbox()
+
+    monkeypatch.setattr(intake_mod, "get_platform", lambda: _Platform())
+    profile = intake_repository(str(tmp_path), project_id="p")
+    assert (profile.baseline_passed, profile.baseline_failed) == (passed, failed)
+    assert seen[0].network is False
+    assert seen[0].cwd == tmp_path

@@ -7,6 +7,8 @@
 #   - imports from src/asf/contracts/ids.py: DecisionId, RunId, TaskId (typed ids)
 #   - called by src/asf/m5_shared/decisions/broker.py: DecisionRequest, DecisionResolved, NEVER_AUTO_APPROVED
 #   - called by src/asf/cli/views/inbox_view.py: DecisionRequest
+#   - called by src/asf/m2_request/document_ingestion.py: DecisionRequest
+#   - called by src/asf/m2_request/pipeline.py: DecisionRequest
 #   - called by tests/contracts/test_decisions.py: DecisionKind, DecisionRequest, DecisionResolved, NEVER_AUTO_APPROVED
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):

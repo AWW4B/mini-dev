@@ -34,11 +34,13 @@ class _FakeGraph:
     def __init__(self, response: Any = None) -> None:
         self.call_count = 0
         self.last_state: dict[str, Any] | None = None
+        self.last_config: dict[str, Any] | None = None
         self.response = response
 
-    def invoke(self, state: dict[str, Any]) -> Any:
+    def invoke(self, state: dict[str, Any], config: dict[str, Any] | None = None) -> Any:
         self.call_count += 1
         self.last_state = state
+        self.last_config = config
         if self.response is not None:
             return self.response
         return StructuredRequest(
@@ -102,9 +104,12 @@ def test_submit_meets_contract(tmp_path: Path) -> None:
     outbox_row = cur.fetchone()
     assert outbox_row is not None
     event_data = json.loads(outbox_row[0])
-    assert event_data["kind"] == "STATE_CHANGED"
-    assert event_data["entity"] == "request"
-    assert event_data["entity_id"] == res.request_id
+    assert event_data["kind"] == "state_changed"
+    assert event_data["run_id"] == res.request_id
+    assert event_data["actor"]["role"] == "intake"
+    assert event_data["payload"]["entity"] == "request"
+    assert event_data["payload"]["entity_id"] == res.request_id
+    assert event_data["payload"]["status"] == "COMPLETED"
 
     # 2. Idempotency: duplicate request returns the existing request id and record
     res2 = submit(req, state_store=store, graph=fake_graph)
@@ -150,3 +155,24 @@ def test_submit_dict_output(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(res, StructuredRequest)
     assert res.request_id == "req-custom-99"
     assert res.task_type.value == "debug"
+
+
+def test_graph_receives_the_store_through_the_config_not_the_checkpointed_state(tmp_path: Path) -> None:
+    store = StateStore.open(tmp_path / "state.db")
+    fake_graph = _FakeGraph()
+    req = SubmitRequest(project_id="p-cfg", text="Build a calculator")
+    submit(req, state_store=store, graph=fake_graph)
+    assert fake_graph.last_state is not None and "state_store" not in fake_graph.last_state
+    assert fake_graph.last_config is not None
+    configurable = fake_graph.last_config["configurable"]
+    assert configurable["state_store"] is store
+    assert configurable["thread_id"] == fake_graph.last_state["request_id"]
+
+
+def test_in_process_cache_is_bounded() -> None:
+    cache = submit.__globals__["_REQUEST_CACHE"]
+    limit = submit.__globals__["_CACHE_LIMIT"]
+    cache.clear()
+    for i in range(limit + 20):
+        submit(SubmitRequest(project_id="p-lru", text=f"request number {i}"), graph=_FakeGraph())
+    assert len(cache) == limit

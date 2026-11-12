@@ -7,6 +7,7 @@
 #   - imports from src/asf/contracts/requests.py: SubmitRequest, StructuredRequest (IF-01/IF-02)
 #   - imports from src/asf/m5_shared/state_store/store.py: StateStore (IF-16 state)
 #   - imports from src/asf/m2_request/pipeline.py: build_request_graph (the M2 graph)
+#   - imports from src/asf/contracts/events.py: EventEnvelope, EventKind (the STATE_CHANGED envelope)
 #   - called by src/asf/cli/commands/run.py: submit
 #   - called by tests/m2_request/test_intake_router.py: submit
 #   - emits/consumes: emits STATE_CHANGED for the request record
@@ -22,17 +23,28 @@
 # DONE WHEN: (1) tests/m2_request/test_intake_router.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m2_request/intake_router.py` and `uv run mypy src/asf/m2_request/intake_router.py` are clean.
 
 import hashlib
-import json
+import logging
 import sqlite3
-import uuid
+from collections import OrderedDict
 from datetime import UTC, datetime
 from typing import Any
 
+from asf.contracts.events import EventEnvelope, EventKind
 from asf.contracts.requests import StructuredRequest, SubmitRequest
 from asf.m2_request.pipeline import build_request_graph
 from asf.m5_shared.state_store.store import StateStore
 
-_REQUEST_CACHE: dict[str, StructuredRequest] = {}
+logger = logging.getLogger(__name__)
+
+_CACHE_LIMIT = 128
+_REQUEST_CACHE: OrderedDict[str, StructuredRequest] = OrderedDict()  # bounded LRU: a long-lived process must not grow without limit
+
+
+def _remember(idem_key: str, structured: StructuredRequest) -> None:
+    _REQUEST_CACHE[idem_key] = structured
+    _REQUEST_CACHE.move_to_end(idem_key)
+    while len(_REQUEST_CACHE) > _CACHE_LIMIT:
+        _REQUEST_CACHE.popitem(last=False)
 
 
 def _compute_idempotency_key(request: SubmitRequest) -> str:
@@ -77,11 +89,13 @@ def submit(
             if row is not None:
                 return StructuredRequest.model_validate_json(row["payload"])
         except sqlite3.OperationalError:
-            pass
+            logger.warning("idempotency lookup failed; continuing without the stored record", exc_info=True)
 
     # 2. Check process memory cache for duplicate
-    if idem_key in _REQUEST_CACHE:
-        return _REQUEST_CACHE[idem_key]
+    cached = _REQUEST_CACHE.get(idem_key)
+    if cached is not None:
+        _REQUEST_CACHE.move_to_end(idem_key)
+        return cached
 
     request_id = f"req-{idem_key[:16]}"
 
@@ -117,7 +131,10 @@ def submit(
     if graph is None:
         graph = build_request_graph(checkpointer=None)
 
-    output = graph.invoke(initial_state)
+    runtime: dict[str, Any] = {"thread_id": request_id}
+    if state_store is not None:
+        runtime["state_store"] = state_store  # live objects go in the config, not the checkpointed state
+    output = graph.invoke(initial_state, {"configurable": runtime})
 
     if isinstance(output, StructuredRequest):
         structured = output
@@ -135,7 +152,7 @@ def submit(
         raise TypeError(f"Unexpected graph output type: {type(output)}")
 
     # 5. Store record and emit STATE_CHANGED
-    _REQUEST_CACHE[idem_key] = structured
+    _remember(idem_key, structured)
 
     if state_store is not None and not state_store.readonly:
         now_iso = datetime.now(UTC).isoformat()
@@ -145,21 +162,25 @@ def submit(
                 "VALUES (?, ?, ?, ?)",
                 (idem_key, request_id, structured.model_dump_json(), now_iso),
             )
-            event_payload = json.dumps({
-                "kind": "STATE_CHANGED",
-                "entity": "request",
-                "entity_id": request_id,
-                "idempotency_key": idem_key,
-                "status": "COMPLETED",
-                "timestamp": now_iso,
-            })
+            event = EventEnvelope.model_validate(
+                {
+                    "event_id": f"evt-{request_id}-state_changed",
+                    "run_id": request_id,
+                    "seq": 0,  # the event log assigns the real sequence number
+                    "ts": now_iso,
+                    "actor": {"kind": "service", "role": "intake", "name": "Request intake"},
+                    "kind": EventKind.STATE_CHANGED,
+                    "correlation_id": request_id,
+                    "payload": {"entity": "request", "entity_id": request_id, "idempotency_key": idem_key, "status": "COMPLETED"},
+                }
+            )
             state_store.conn.execute(
                 "INSERT OR IGNORE INTO outbox (event_id, run_id, payload, published, created_at) "
                 "VALUES (?, ?, ?, 0, ?)",
-                (f"evt-{uuid.uuid4().hex[:12]}", request_id, event_payload, now_iso),
+                (str(event.event_id), request_id, event.model_dump_json(), now_iso),
             )
             state_store.conn.commit()
         except sqlite3.OperationalError:
-            pass
+            logger.warning("could not store the request record for %s", request_id, exc_info=True)
 
     return structured

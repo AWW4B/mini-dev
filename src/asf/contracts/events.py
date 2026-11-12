@@ -10,6 +10,8 @@
 #   - called by src/asf/m5_shared/events/fanout.py: EventEnvelope, EventKind
 #   - called by src/asf/cli/views/trace_view.py: EventEnvelope, Visibility
 #   - called by src/asf/web/narrative.py: EventEnvelope, EventKind
+#   - called by src/asf/m2_request/pipeline.py: EventEnvelope, EventKind
+#   - called by src/asf/m2_request/intake_router.py: EventEnvelope, EventKind
 #   - called by tests/contracts/test_events.py: EventKind, Visibility, Actor, EventEnvelope, TaskReceivedPayload, StepStartedPayload, ToolCalledPayload, ToolResultPayload, HandoffPayload, GateResultPayload, DecisionNeededPayload
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
