@@ -18,17 +18,36 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/contracts/test_history.py` on Windows and Linux once src/asf/contracts/history.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/contracts/test_history.py` and `uv run mypy tests/contracts/test_history.py` are clean.
 
 
-from asf.contracts.history import HistoryQuery, HistoryResult, RunSummary  # noqa: F401
+
+import pytest
+from pydantic import ValidationError
+
+from asf.contracts.history import HistoryQuery, HistoryResult, RunSummary
 
 
-def test_history_query_meets_contract() -> None:
-    """Prove HistoryQuery behaves as declared in src/asf/contracts/history.py."""
-    raise NotImplementedError("write this test before implementing HistoryQuery")
+def test_query_defaults_to_the_fifty_most_recent_without_filters() -> None:
+    q = HistoryQuery()
+    assert q.project_id is None and q.run_id is None
+    assert q.limit == 50
 
-def test_run_summary_meets_contract() -> None:
-    """Prove RunSummary behaves as declared in src/asf/contracts/history.py."""
-    raise NotImplementedError("write this test before implementing RunSummary")
 
-def test_history_result_meets_contract() -> None:
-    """Prove HistoryResult behaves as declared in src/asf/contracts/history.py."""
-    raise NotImplementedError("write this test before implementing HistoryResult")
+def test_query_accepts_filters() -> None:
+    q = HistoryQuery.model_validate({"project_id": "p1", "run_id": "r1", "limit": 5})
+    assert (q.project_id, q.run_id, q.limit) == ("p1", "r1", 5)
+
+
+def test_summary_requires_all_fields_and_flags_estimated_cost() -> None:
+    data = {"run_id": "r1", "project_id": "p1", "status": "done", "last_activity": "2026-11-12", "cost": 1.5, "cost_estimated": True}
+    assert RunSummary.model_validate(data).cost_estimated is True
+    for missing in data:
+        partial = dict(data)
+        del partial[missing]
+        with pytest.raises(ValidationError):
+            RunSummary.model_validate(partial)
+
+
+def test_result_round_trip_and_empty_result() -> None:
+    assert HistoryResult.model_validate({"runs": []}).runs == []
+    row = {"run_id": "r1", "project_id": "p1", "status": "done", "last_activity": "t", "cost": 0.0, "cost_estimated": False}
+    res = HistoryResult.model_validate({"runs": [row]})
+    assert HistoryResult.model_validate_json(res.model_dump_json()) == res

@@ -18,7 +18,10 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/contracts/test_errors.py` on Windows and Linux once src/asf/contracts/errors.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/contracts/test_errors.py` and `uv run mypy tests/contracts/test_errors.py` are clean.
 
 
-from asf.contracts.errors import (  # noqa: F401
+
+import pytest
+
+from asf.contracts.errors import (
     ApprovalRequired,
     AsfError,
     BudgetExceeded,
@@ -32,47 +35,46 @@ from asf.contracts.errors import (  # noqa: F401
     StateConflict,
 )
 
+SUBCLASSES = [
+    ConfigError,
+    PolicyDenied,
+    ApprovalRequired,
+    BudgetExceeded,
+    ContextOverflow,
+    ProviderUnavailable,
+    InvalidModelOutput,
+    SandboxUnavailable,
+    StateConflict,
+    NotSupportedOnPlatform,
+]
 
-def test_asf_error_meets_contract() -> None:
-    """Prove AsfError behaves as declared in src/asf/contracts/errors.py."""
-    raise NotImplementedError("write this test before implementing AsfError")
 
-def test_config_error_meets_contract() -> None:
-    """Prove ConfigError behaves as declared in src/asf/contracts/errors.py."""
-    raise NotImplementedError("write this test before implementing ConfigError")
+def test_base_error_is_an_exception() -> None:
+    assert issubclass(AsfError, Exception)
 
-def test_policy_denied_meets_contract() -> None:
-    """Prove PolicyDenied behaves as declared in src/asf/contracts/errors.py."""
-    raise NotImplementedError("write this test before implementing PolicyDenied")
 
-def test_approval_required_meets_contract() -> None:
-    """Prove ApprovalRequired behaves as declared in src/asf/contracts/errors.py."""
-    raise NotImplementedError("write this test before implementing ApprovalRequired")
+@pytest.mark.parametrize("cls", SUBCLASSES)
+def test_every_error_derives_directly_from_asf_error(cls: type[AsfError]) -> None:
+    assert cls.__bases__ == (AsfError,)
 
-def test_budget_exceeded_meets_contract() -> None:
-    """Prove BudgetExceeded behaves as declared in src/asf/contracts/errors.py."""
-    raise NotImplementedError("write this test before implementing BudgetExceeded")
 
-def test_context_overflow_meets_contract() -> None:
-    """Prove ContextOverflow behaves as declared in src/asf/contracts/errors.py."""
-    raise NotImplementedError("write this test before implementing ContextOverflow")
+@pytest.mark.parametrize("cls", SUBCLASSES)
+def test_every_error_is_caught_by_the_base_class_and_keeps_its_message(cls: type[AsfError]) -> None:
+    with pytest.raises(AsfError) as info:
+        raise cls("something actionable happened")
+    assert type(info.value) is cls
+    assert str(info.value) == "something actionable happened"
 
-def test_provider_unavailable_meets_contract() -> None:
-    """Prove ProviderUnavailable behaves as declared in src/asf/contracts/errors.py."""
-    raise NotImplementedError("write this test before implementing ProviderUnavailable")
 
-def test_invalid_model_output_meets_contract() -> None:
-    """Prove InvalidModelOutput behaves as declared in src/asf/contracts/errors.py."""
-    raise NotImplementedError("write this test before implementing InvalidModelOutput")
+@pytest.mark.parametrize("cls", SUBCLASSES)
+def test_every_error_has_a_docstring_saying_when_it_is_raised(cls: type[AsfError]) -> None:
+    assert cls.__doc__ is not None and cls.__doc__.strip()
 
-def test_sandbox_unavailable_meets_contract() -> None:
-    """Prove SandboxUnavailable behaves as declared in src/asf/contracts/errors.py."""
-    raise NotImplementedError("write this test before implementing SandboxUnavailable")
 
-def test_state_conflict_meets_contract() -> None:
-    """Prove StateConflict behaves as declared in src/asf/contracts/errors.py."""
-    raise NotImplementedError("write this test before implementing StateConflict")
-
-def test_not_supported_on_platform_meets_contract() -> None:
-    """Prove NotSupportedOnPlatform behaves as declared in src/asf/contracts/errors.py."""
-    raise NotImplementedError("write this test before implementing NotSupportedOnPlatform")
+def test_errors_are_distinct_types_and_not_interchangeable() -> None:
+    assert len(set(SUBCLASSES)) == len(SUBCLASSES)
+    with pytest.raises(PolicyDenied):
+        try:
+            raise PolicyDenied("no")
+        except ConfigError:
+            pytest.fail("PolicyDenied must not be caught as ConfigError")

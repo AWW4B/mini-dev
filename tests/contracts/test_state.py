@@ -18,9 +18,42 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/contracts/test_state.py` on Windows and Linux once src/asf/contracts/state.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/contracts/test_state.py` and `uv run mypy tests/contracts/test_state.py` are clean.
 
 
-from asf.contracts.state import StateCommit  # noqa: F401
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from asf.contracts.state import StateCommit
 
 
-def test_state_commit_meets_contract() -> None:
-    """Prove StateCommit behaves as declared in src/asf/contracts/state.py."""
-    raise NotImplementedError("write this test before implementing StateCommit")
+def _event() -> dict[str, Any]:
+    return {
+        "event_id": "e1", "run_id": "r1", "seq": 1, "ts": "2026-11-12T10:00:00+00:00",
+        "actor": {"kind": "service", "role": "scheduler", "name": "Scheduler"}, "kind": "state_changed", "correlation_id": "c1",
+    }
+
+
+def test_create_commit_uses_none_as_expected_version() -> None:
+    commit = StateCommit.model_validate({"entity": "task", "entity_id": "t1", "expected_version": None, "mutation": {"state": "READY"}})
+    assert commit.expected_version is None
+    assert commit.events == []
+
+
+def test_expected_version_must_be_stated() -> None:
+    with pytest.raises(ValidationError):
+        StateCommit.model_validate({"entity": "task", "entity_id": "t1", "mutation": {}})
+
+
+def test_commit_carries_events_and_round_trips() -> None:
+    commit = StateCommit.model_validate(
+        {"entity": "task", "entity_id": "t1", "expected_version": 3, "mutation": {"state": "RUNNING"}, "events": [_event()]}
+    )
+    assert commit.events[0].kind == "state_changed"
+    assert StateCommit.model_validate_json(commit.model_dump_json()) == commit
+
+
+def test_commit_rejects_an_invalid_event() -> None:
+    bad = _event()
+    del bad["seq"]
+    with pytest.raises(ValidationError):
+        StateCommit.model_validate({"entity": "task", "entity_id": "t1", "expected_version": None, "mutation": {}, "events": [bad]})

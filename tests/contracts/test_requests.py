@@ -18,25 +18,63 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/contracts/test_requests.py` on Windows and Linux once src/asf/contracts/requests.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/contracts/test_requests.py` and `uv run mypy tests/contracts/test_requests.py` are clean.
 
 
-from asf.contracts.requests import RepoProfile, Requirement, StructuredRequest, SubmitRequest, TaskType  # noqa: F401
+
+import pytest
+from pydantic import ValidationError
+
+from asf.contracts.requests import RepoProfile, Requirement, StructuredRequest, SubmitRequest, TaskType
 
 
-def test_task_type_meets_contract() -> None:
-    """Prove TaskType behaves as declared in src/asf/contracts/requests.py."""
-    raise NotImplementedError("write this test before implementing TaskType")
+def test_task_types_include_the_unsupported_marker() -> None:
+    assert {t.value for t in TaskType} == {
+        "new_build", "debug", "feature", "refactor", "test_generation", "code_docs", "unsupported",
+    }
 
-def test_submit_request_meets_contract() -> None:
-    """Prove SubmitRequest behaves as declared in src/asf/contracts/requests.py."""
-    raise NotImplementedError("write this test before implementing SubmitRequest")
 
-def test_requirement_meets_contract() -> None:
-    """Prove Requirement behaves as declared in src/asf/contracts/requests.py."""
-    raise NotImplementedError("write this test before implementing Requirement")
+def test_submit_request_defaults() -> None:
+    req = SubmitRequest.model_validate({"project_id": "p1", "text": "build a todo app"})
+    assert req.attachment_refs == []
+    assert req.repo_ref is None
+    assert req.mode_hint is None
 
-def test_repo_profile_meets_contract() -> None:
-    """Prove RepoProfile behaves as declared in src/asf/contracts/requests.py."""
-    raise NotImplementedError("write this test before implementing RepoProfile")
 
-def test_structured_request_meets_contract() -> None:
-    """Prove StructuredRequest behaves as declared in src/asf/contracts/requests.py."""
-    raise NotImplementedError("write this test before implementing StructuredRequest")
+def test_submit_request_mode_hint_must_be_a_task_type() -> None:
+    assert SubmitRequest.model_validate({"project_id": "p1", "text": "x", "mode_hint": "debug"}).mode_hint is TaskType.DEBUG
+    with pytest.raises(ValidationError):
+        SubmitRequest.model_validate({"project_id": "p1", "text": "x", "mode_hint": "poetry"})
+
+
+def test_submit_request_requires_text() -> None:
+    with pytest.raises(ValidationError):
+        SubmitRequest.model_validate({"project_id": "p1"})
+
+
+def test_requirement_requires_anchor_text_and_source() -> None:
+    req = Requirement.model_validate({"req_id": "REQ-1", "text": "must log in", "source_ref": "spec.md#1"})
+    assert req.req_id == "REQ-1"
+    with pytest.raises(ValidationError):
+        Requirement.model_validate({"req_id": "REQ-1", "text": "must log in"})
+
+
+def test_repo_profile_commands_are_argument_lists_not_shell_strings() -> None:
+    ok = RepoProfile.model_validate({"languages": ["python"], "build_commands": [["uv", "sync"]], "test_commands": [["pytest", "-q"]]})
+    assert ok.supported is True
+    assert ok.baseline_passed == [] and ok.baseline_failed == [] and ok.index_ref is None
+    with pytest.raises(ValidationError):
+        RepoProfile.model_validate({"languages": ["python"], "build_commands": ["uv sync"], "test_commands": []})
+
+
+def test_structured_request_defaults_and_nested_profile() -> None:
+    sr = StructuredRequest.model_validate({
+        "request_id": "q1", "project_id": "p1", "task_type": "feature",
+        "requirements": [{"req_id": "REQ-1", "text": "t", "source_ref": "s"}],
+    })
+    assert sr.constraints == [] and sr.nfrs == [] and sr.acceptance == []
+    assert sr.assumptions == [] and sr.open_questions == []
+    assert sr.repo_profile is None
+    with_profile = StructuredRequest.model_validate({
+        "request_id": "q1", "project_id": "p1", "task_type": "debug", "requirements": [],
+        "repo_profile": {"languages": ["python"], "build_commands": [], "test_commands": [["pytest"]]},
+    })
+    assert with_profile.repo_profile is not None and with_profile.repo_profile.test_commands == [["pytest"]]
+    assert StructuredRequest.model_validate_json(with_profile.model_dump_json()) == with_profile

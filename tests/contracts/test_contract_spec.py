@@ -18,25 +18,79 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/contracts/test_contract_spec.py` on Windows and Linux once src/asf/contracts/contract_spec.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/contracts/test_contract_spec.py` and `uv run mypy tests/contracts/test_contract_spec.py` are clean.
 
 
-from asf.contracts.contract_spec import ContractCapsule, ContractQuery, ContractSpec, ContractStatus, Operation  # noqa: F401
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from asf.contracts.contract_spec import ContractCapsule, ContractQuery, ContractSpec, ContractStatus, Operation
 
 
-def test_contract_status_meets_contract() -> None:
-    """Prove ContractStatus behaves as declared in src/asf/contracts/contract_spec.py."""
-    raise NotImplementedError("write this test before implementing ContractStatus")
+def _operation() -> dict[str, Any]:
+    return {"name": "put", "signature": "put(data: bytes) -> str", "returns": "sha256 ref", "example": "put(b'x')"}
 
-def test_operation_meets_contract() -> None:
-    """Prove Operation behaves as declared in src/asf/contracts/contract_spec.py."""
-    raise NotImplementedError("write this test before implementing Operation")
 
-def test_contract_spec_meets_contract() -> None:
-    """Prove ContractSpec behaves as declared in src/asf/contracts/contract_spec.py."""
-    raise NotImplementedError("write this test before implementing ContractSpec")
+def _spec() -> dict[str, Any]:
+    return {"contract_id": "c_1", "module_id": "blobs", "version": "1.0.0", "operations": [_operation()]}
 
-def test_contract_capsule_meets_contract() -> None:
-    """Prove ContractCapsule behaves as declared in src/asf/contracts/contract_spec.py."""
-    raise NotImplementedError("write this test before implementing ContractCapsule")
 
-def test_contract_query_meets_contract() -> None:
-    """Prove ContractQuery behaves as declared in src/asf/contracts/contract_spec.py."""
-    raise NotImplementedError("write this test before implementing ContractQuery")
+def test_status_values_match_the_lifecycle() -> None:
+    assert [s.value for s in ContractStatus] == ["DRAFT", "VERIFIED", "STABLE", "DEPRECATED"]
+
+
+def test_operation_defaults_and_required_fields() -> None:
+    op = Operation.model_validate(_operation())
+    assert op.params == {}
+    assert op.errors == []
+    for missing in ("name", "signature", "returns", "example"):
+        data = _operation()
+        del data[missing]
+        with pytest.raises(ValidationError):
+            Operation.model_validate(data)
+
+
+def test_spec_defaults_to_draft_with_empty_collections() -> None:
+    spec = ContractSpec.model_validate(_spec())
+    assert spec.status is ContractStatus.DRAFT
+    assert spec.data_schemas == {}
+    assert spec.invariants == []
+    assert spec.producer_task is None
+    assert spec.consumer_tasks == []
+    assert spec.contract_test_refs == []
+
+
+def test_spec_requires_operations() -> None:
+    data = _spec()
+    del data["operations"]
+    with pytest.raises(ValidationError):
+        ContractSpec.model_validate(data)
+
+
+def test_spec_rejects_unknown_status() -> None:
+    with pytest.raises(ValidationError):
+        ContractSpec.model_validate({**_spec(), "status": "FINAL"})
+
+
+def test_spec_json_round_trip_with_tasks_and_status() -> None:
+    spec = ContractSpec.model_validate({**_spec(), "status": "STABLE", "producer_task": "t1", "consumer_tasks": ["t2", "t3"]})
+    assert ContractSpec.model_validate_json(spec.model_dump_json()) == spec
+
+
+@pytest.mark.parametrize("count", [3, 4, 5])
+def test_capsule_accepts_three_to_five_lines(count: int) -> None:
+    capsule = ContractCapsule.model_validate({"module_id": "m", "version": "1", "operation": "op", "lines": ["x"] * count})
+    assert len(capsule.lines) == count
+
+
+@pytest.mark.parametrize("count", [0, 2, 6])
+def test_capsule_rejects_fewer_than_three_or_more_than_five_lines(count: int) -> None:
+    with pytest.raises(ValidationError):
+        ContractCapsule.model_validate({"module_id": "m", "version": "1", "operation": "op", "lines": ["x"] * count})
+
+
+def test_query_is_valid_with_no_arguments_and_lists_are_independent() -> None:
+    a = ContractQuery()
+    b = ContractQuery()
+    assert a.module_ids == [] and a.task_id is None and a.pinned_versions == {}
+    a.module_ids.append("blobs")
+    assert b.module_ids == []

@@ -18,21 +18,84 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/contracts/test_decisions.py` on Windows and Linux once src/asf/contracts/decisions.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/contracts/test_decisions.py` and `uv run mypy tests/contracts/test_decisions.py` are clean.
 
 
-from asf.contracts.decisions import NEVER_AUTO_APPROVED, DecisionKind, DecisionRequest, DecisionResolved  # noqa: F401
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from asf.contracts.decisions import NEVER_AUTO_APPROVED, DecisionKind, DecisionRequest, DecisionResolved
 
 
-def test_decision_kind_meets_contract() -> None:
-    """Prove DecisionKind behaves as declared in src/asf/contracts/decisions.py."""
-    raise NotImplementedError("write this test before implementing DecisionKind")
+def _request() -> dict[str, Any]:
+    return {
+        "decision_id": "d1",
+        "run_id": "r1",
+        "kind": "clarify",
+        "requester": "asf.m2_request.pipeline",
+        "question": "Which database?",
+        "options": ["sqlite", "postgres"],
+        "default_on_timeout": "sqlite",
+    }
 
-def test_decision_request_meets_contract() -> None:
-    """Prove DecisionRequest behaves as declared in src/asf/contracts/decisions.py."""
-    raise NotImplementedError("write this test before implementing DecisionRequest")
 
-def test_decision_resolved_meets_contract() -> None:
-    """Prove DecisionResolved behaves as declared in src/asf/contracts/decisions.py."""
-    raise NotImplementedError("write this test before implementing DecisionResolved")
+def test_never_auto_approved_is_exactly_the_unsafe_kinds() -> None:
+    assert isinstance(NEVER_AUTO_APPROVED, frozenset)
+    assert frozenset({
+        DecisionKind.BREAKING_CONTRACT,
+        DecisionKind.TOOL_PERMISSION,
+        DecisionKind.BUDGET_RAISE,
+        DecisionKind.UNSANDBOXED_EXECUTION,
+        DecisionKind.DEPENDENCY_INSTALL,
+        DecisionKind.NO_WHEEL_EXCEPTION,
+    }) == NEVER_AUTO_APPROVED
 
-def test_n_e_v_e_r__a_u_t_o__a_p_p_r_o_v_e_d_meets_contract() -> None:
-    """Prove NEVER_AUTO_APPROVED behaves as declared in src/asf/contracts/decisions.py."""
-    raise NotImplementedError("write this test before implementing NEVER_AUTO_APPROVED")
+
+@pytest.mark.parametrize("kind", [DecisionKind.CLARIFY, DecisionKind.APPROVE_PLAN, DecisionKind.ESCALATION, DecisionKind.MANUAL_SPLIT])
+def test_routine_kinds_may_be_defaulted(kind: DecisionKind) -> None:
+    assert kind not in NEVER_AUTO_APPROVED
+
+
+def test_kind_values_are_lowercase_snake_case_and_unique() -> None:
+    values = [k.value for k in DecisionKind]
+    assert len(values) == len(set(values)) == 11
+    assert all(v == v.lower() and " " not in v for v in values)
+
+
+def test_request_defaults() -> None:
+    req = DecisionRequest.model_validate(_request())
+    assert req.task_id is None
+    assert req.deadline is None
+    assert req.evidence_refs == []
+
+
+def test_default_on_timeout_must_be_stated_but_may_be_none() -> None:
+    data = _request()
+    del data["default_on_timeout"]
+    with pytest.raises(ValidationError):
+        DecisionRequest.model_validate(data)
+    assert DecisionRequest.model_validate({**_request(), "default_on_timeout": None}).default_on_timeout is None
+
+
+def test_request_parses_iso_deadline_and_round_trips() -> None:
+    req = DecisionRequest.model_validate({**_request(), "deadline": "2026-11-12T10:00:00+00:00"})
+    assert req.deadline == datetime(2026, 11, 12, 10, 0, tzinfo=UTC)
+    assert DecisionRequest.model_validate_json(req.model_dump_json()) == req
+
+
+def test_unknown_kind_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        DecisionRequest.model_validate({**_request(), "kind": "yolo"})
+
+
+def test_resolved_defaults_to_a_human_answer() -> None:
+    res = DecisionResolved.model_validate(
+        {"decision_id": "d1", "choice": "sqlite", "answered_by": "user", "answered_at": "2026-11-12T10:00:00+00:00"}
+    )
+    assert res.applied_default is False
+    assert res.text is None
+
+
+def test_resolved_requires_answered_at() -> None:
+    with pytest.raises(ValidationError):
+        DecisionResolved.model_validate({"decision_id": "d1", "choice": "x", "answered_by": "user"})

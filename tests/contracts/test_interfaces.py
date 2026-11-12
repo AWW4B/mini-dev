@@ -18,13 +18,47 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/contracts/test_interfaces.py` on Windows and Linux once src/asf/contracts/interfaces.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/contracts/test_interfaces.py` and `uv run mypy tests/contracts/test_interfaces.py` are clean.
 
 
-from asf.contracts.interfaces import INTERFACES, InterfaceInfo  # noqa: F401
+
+import re
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from asf.contracts.interfaces import INTERFACES, InterfaceInfo
+
+CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "src" / "asf" / "contracts"
+
+EXPECTED_IDS = {
+    "IF-01", "IF-02", "IF-03", "IF-04", "IF-05", "IF-06", "IF-07", "IF-07a", "IF-08", "IF-09", "IF-10", "IF-10b", "IF-10c",
+    "IF-11", "IF-12", "IF-13", "IF-14", "IF-15", "IF-16", "IF-17", "IF-18", "IF-19", "IF-20", "IF-21", "IF-23", "IF-24",
+}
 
 
-def test_interface_info_meets_contract() -> None:
-    """Prove InterfaceInfo behaves as declared in src/asf/contracts/interfaces.py."""
-    raise NotImplementedError("write this test before implementing InterfaceInfo")
+def test_registry_holds_exactly_the_documented_interfaces() -> None:
+    assert set(INTERFACES) == EXPECTED_IDS
 
-def test_i_n_t_e_r_f_a_c_e_s_meets_contract() -> None:
-    """Prove INTERFACES behaves as declared in src/asf/contracts/interfaces.py."""
-    raise NotImplementedError("write this test before implementing INTERFACES")
+
+def test_registry_keys_match_each_entry_id() -> None:
+    for key, info in INTERFACES.items():
+        assert key == info.if_id
+
+
+def test_every_entry_is_fully_populated() -> None:
+    for info in INTERFACES.values():
+        assert info.name and info.producer and info.consumer and info.payload_model and info.kind
+
+
+def test_interface_info_requires_all_fields() -> None:
+    with pytest.raises(ValidationError):
+        InterfaceInfo.model_validate({"if_id": "IF-99", "name": "x"})
+
+
+def test_every_payload_model_path_points_at_a_class_defined_in_the_contracts_package() -> None:
+    for info in INTERFACES.values():
+        module_path, _, class_name = info.payload_model.rpartition(".")
+        assert module_path.startswith("asf.contracts."), info.if_id
+        source = CONTRACTS_DIR / (module_path.split(".")[-1] + ".py")
+        assert source.is_file(), f"{info.if_id}: {source} missing"
+        text = source.read_text(encoding="utf-8")
+        assert re.search(rf"^class {class_name}\b", text, re.MULTILINE), f"{info.if_id}: class {class_name} not found in {source.name}"
