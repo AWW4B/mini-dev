@@ -25,6 +25,7 @@
 
 import asyncio
 import concurrent.futures
+import logging
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any, cast
@@ -34,6 +35,8 @@ from pydantic import BaseModel
 
 from asf.config.loader import load_layered
 from asf.m5_shared.tools.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class McpServerReport(BaseModel):
@@ -76,7 +79,8 @@ class McpManager:
         else:
             try:
                 self._config = load_layered("mcp", project_root=project_root)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - default-deny: no servers are connected, but the reason is logged
+                logger.warning("could not load the MCP configuration; no MCP servers will be used", exc_info=True)
                 self._config = {}
         self._servers = self._config.get("servers", {})
 
@@ -179,8 +183,8 @@ class McpManager:
 
             try:
                 tools = cast(list[Any], _run_coro_sync(_fetch_tools(conn, srv_name)))
-            except Exception as _fetch_err:  # noqa: BLE001
-                _ = _fetch_err
+            except Exception:  # noqa: BLE001 - one unreachable server must not hide the others
+                logger.warning("could not list the tools of MCP server %s", srv_name, exc_info=True)
                 continue
 
             policy_tools = srv.get("tools", {})

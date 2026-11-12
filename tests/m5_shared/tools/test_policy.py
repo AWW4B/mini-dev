@@ -22,6 +22,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from asf.m5_shared.tools.policy import PolicyEngine, PolicyVerdict, Verdict
 
 
@@ -144,3 +146,20 @@ def test_policy_engine_meets_contract(tmp_path: Path) -> None:
     res_code = engine.check(inv_net, code_spec, "B", [])  # type: ignore[arg-type]
     assert res_code.verdict == Verdict.DENY
     assert "code" in res_code.reason.lower()
+
+
+def test_the_policy_file_is_loaded_from_its_real_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path))
+    engine = PolicyEngine()
+    assert "roles" in engine.policy_config
+    assert engine.policy_config["roles"]["T1"]["tools"] == []
+
+
+def test_a_broken_policy_file_stops_the_engine_instead_of_becoming_an_empty_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path))
+    config = tmp_path / "config"
+    config.mkdir(parents=True)
+    (config / "policy.toml").write_text("not = = toml [", encoding="utf-8")
+    with pytest.raises(Exception) as info:  # noqa: PT011 - ConfigError lives in contracts, which this test does not import
+        PolicyEngine()
+    assert type(info.value).__name__ == "ConfigError"

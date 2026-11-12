@@ -135,3 +135,11 @@ def test_state_store_meets_contract(tmp_path: Path) -> None:
 
     # 10. Close writer
     store.close()
+
+
+def test_unknown_entity_names_never_reach_the_sql(tmp_path: Path) -> None:
+    store = StateStore.open(tmp_path / "state.db")
+    change = SimpleNamespace(entity="tasks; DROP TABLE runs; --", entity_id="x", expected_version=None, mutation={}, events=[])
+    with pytest.raises(ValueError, match="Unknown entity"):
+        store.commit(change)  # type: ignore[arg-type]
+    assert store.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0  # the table still exists

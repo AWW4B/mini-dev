@@ -26,6 +26,7 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/runtime/test_backends.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/runtime/backends.py` and `uv run mypy src/asf/m5_shared/runtime/backends.py` are clean.
 
+import logging
 import shutil
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -34,6 +35,8 @@ import httpx
 
 from asf.config.paths import AppPaths, get_paths  # noqa: F401
 from asf.platform.select import get_platform
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -100,8 +103,8 @@ class LlamaServerBackend:
         if self._pid is not None:
             try:
                 get_platform().kill_tree(self._pid)
-            except Exception as _err:  # noqa: BLE001
-                _ = _err
+            except Exception:  # noqa: BLE001 - the platform adapter raises OS-specific errors
+                logger.warning("could not stop the llama-server process tree (pid %s)", self._pid, exc_info=True)
             finally:
                 self._pid = None
 
@@ -111,8 +114,7 @@ class LlamaServerBackend:
             with httpx.Client(timeout=1.0) as client:
                 resp = client.get(url)
                 return resp.status_code == 200
-        except Exception as _err:  # noqa: BLE001
-            _ = _err
+        except httpx.HTTPError:  # not reachable (yet): the caller polls
             return False
 
     def tokenize(self, content: str) -> list[int]:
@@ -124,8 +126,8 @@ class LlamaServerBackend:
                     data = resp.json()
                     tokens = data.get("tokens", [])
                     return [int(t) for t in tokens]
-        except Exception as _err:  # noqa: BLE001
-            _ = _err
+        except (httpx.HTTPError, ValueError):
+            logger.warning("tokenize request to %s failed; the caller falls back to an estimate", url, exc_info=True)
         return []
 
 
@@ -147,8 +149,7 @@ class OllamaBackend:
             with httpx.Client(timeout=1.0) as client:
                 resp = client.get(f"{self.base_url}/api/tags")
                 return resp.status_code == 200
-        except Exception as _err:  # noqa: BLE001
-            _ = _err
+        except httpx.HTTPError:  # not reachable (yet): the caller polls
             return False
 
 
@@ -170,6 +171,5 @@ class ExternalBackend:
             with httpx.Client(timeout=1.0) as client:
                 resp = client.get(f"{self.base_url}/health")
                 return resp.status_code == 200
-        except Exception as _err:  # noqa: BLE001
-            _ = _err
+        except httpx.HTTPError:  # not reachable (yet): the caller polls
             return False

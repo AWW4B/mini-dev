@@ -182,8 +182,7 @@ def _check_resources() -> CheckResult:
         ram_str = f"RAM free: {reading.ram_free_mb} MB"
         vram_str = f", VRAM free: {reading.vram_free_mb} MB" if reading.vram_free_mb is not None else ", VRAM: n/a"
         return CheckResult(name="resources", status=CheckStatus.OK, detail=f"{ram_str}{vram_str}")
-    except (NotImplementedError, Exception):
-        # Stub or probe error fallback to psutil
+    except Exception:  # noqa: BLE001 - the GPU probe is optional: fall back to plain RAM numbers
         try:
             mem = psutil.virtual_memory()
             free_mb = int(mem.available / (1024 * 1024))

@@ -101,3 +101,11 @@ def test_write_user_toml_idempotent(fake_paths: Any) -> None:
 
     result = load_layered("factory")
     assert result.get("output") == "plain"
+
+
+def test_invalid_toml_raises_a_config_error_naming_the_file(tmp_path: Path, fake_paths: Any) -> None:
+    (fake_paths.config_dir / "broken.toml").write_text("a = = 1 [", encoding="utf-8")
+    with pytest.raises(Exception) as info:  # noqa: PT011 - ConfigError lives in contracts, which this test does not import
+        load_layered("broken")
+    assert type(info.value).__name__ == "ConfigError"
+    assert "broken.toml" in str(info.value)

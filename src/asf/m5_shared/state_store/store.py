@@ -28,6 +28,7 @@
 #   - called by src/asf/cli/commands/report.py: StateStore
 #   - called by src/asf/cli/run_controls.py: StateStore
 #   - called by tests/m5_shared/state_store/test_store.py: StateStore
+#   - called by tests/m5_shared/state_store/test_recovery.py: StateStore
 #   - emits/consumes: writes outbox rows holding EventEnvelope (IF-17) in the same transaction as each mutation
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -91,6 +92,7 @@ class StateStore:
             uri = f"file:{db_path.resolve().as_posix()}?mode=ro"
             conn = sqlite3.connect(uri, uri=True)
             conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout = 5000;")
             return cls(conn, db_path, readonly=True)
 
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,7 +104,9 @@ class StateStore:
     def commit(self, change: StateCommit) -> int:
         """Apply one IF-16 commit atomically; return the new entity version."""
         mapping = _ENTITY_TABLE_MAP.get(change.entity)
-        table, id_col = mapping if mapping else (change.entity, f"{change.entity}_id")
+        if mapping is None:  # the table name is interpolated into SQL below, so only known entities may reach it
+            raise ValueError(f"Unknown entity '{change.entity}'; expected one of {sorted(_ENTITY_TABLE_MAP)}")
+        table, id_col = mapping
         now_iso = datetime.now(UTC).isoformat()
 
         with self.conn:

@@ -6,6 +6,7 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/m5_shared/state_store/store.py: StateStore (reads outbox)
 #   - imports from src/asf/m5_shared/events/event_log.py: EventLog (IF-17 append)
+#   - imports from src/asf/contracts/events.py: EventEnvelope (the parsed outbox payload)
 #   - called by tests/m5_shared/state_store/test_outbox.py: OutboxRelay
 #   - emits/consumes: consumes outbox rows; emits EventEnvelope via EventLog.append
 # INSTRUCTIONS (strict, imperative):
@@ -18,12 +19,18 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/state_store/test_outbox.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/state_store/outbox.py` and `uv run mypy src/asf/m5_shared/state_store/outbox.py` are clean.
 
-import json
-from types import SimpleNamespace
-from typing import Any
+import logging
 
+from pydantic import ValidationError
+
+from asf.contracts.events import EventEnvelope
 from asf.m5_shared.events.event_log import EventLog
 from asf.m5_shared.state_store.store import StateStore
+
+logger = logging.getLogger(__name__)
+
+_PUBLISHED = 1
+_QUARANTINED = -1  # unparseable payload: kept for inspection, never retried
 
 
 class OutboxRelay:
@@ -35,30 +42,38 @@ class OutboxRelay:
         self.log = log
 
     def relay_once(self, max_rows: int = 500) -> int:
-        """Relay pending outbox rows; return how many were relayed."""
-        cur = self.store.conn.execute(
+        """Relay pending outbox rows in commit order; return how many were relayed.
+
+        A row whose payload is not a valid EventEnvelope is quarantined (logged and marked, not retried) so that
+        one bad row can never block every event behind it.
+        """
+        rows = self.store.conn.execute(
             "SELECT id, payload FROM outbox WHERE published = 0 ORDER BY id ASC LIMIT ?",
             (max_rows,),
-        )
-        rows = cur.fetchall()
+        ).fetchall()
         if not rows:
             return 0
 
-        events: list[Any] = []
-        row_ids: list[int] = []
+        events: list[EventEnvelope] = []
+        relayed_ids: list[int] = []
+        quarantined_ids: list[int] = []
         for row in rows:
-            row_ids.append(int(row["id"]))
-            raw = row["payload"]
-            evt_obj = json.loads(raw, object_hook=lambda d: SimpleNamespace(**d))
-            events.append(evt_obj)
+            row_id = int(row["id"])
+            try:
+                events.append(EventEnvelope.model_validate_json(row["payload"]))
+            except ValidationError:
+                logger.error("outbox row %d is not a valid EventEnvelope; quarantined", row_id, exc_info=True)
+                quarantined_ids.append(row_id)
+            else:
+                relayed_ids.append(row_id)
 
-        self.log.append(events)
+        if events:
+            self.log.append(events)
 
         with self.store.conn:
-            placeholders = ",".join("?" for _ in row_ids)
-            self.store.conn.execute(
-                f"UPDATE outbox SET published = 1 WHERE id IN ({placeholders})",  # noqa: S608
-                row_ids,
+            self.store.conn.executemany(
+                "UPDATE outbox SET published = ? WHERE id = ?",
+                [(_PUBLISHED, i) for i in relayed_ids] + [(_QUARANTINED, i) for i in quarantined_ids],
             )
 
-        return len(rows)
+        return len(relayed_ids)

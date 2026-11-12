@@ -7,6 +7,7 @@
 #   - imports from src/asf/contracts/ids.py: TaskId (typed ids)
 #   - called by src/asf/m5_shared/workspace/workspace.py: WorkspaceOp, WorkspaceResult
 #   - called by tests/contracts/test_workspace.py: WorkspaceOpKind, WorkspaceOp, WorkspaceResult
+#   - called by src/asf/m5_shared/state_store/recovery.py: WorkspaceOp
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

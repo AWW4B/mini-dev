@@ -17,6 +17,8 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/metrics/test_pricing.py` on Windows and Linux once src/asf/m5_shared/metrics/pricing.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/metrics/test_pricing.py` and `uv run mypy tests/m5_shared/metrics/test_pricing.py` are clean.
 
+from pathlib import Path
+
 import pytest
 
 from asf.m5_shared.metrics.pricing import price_for
@@ -59,3 +61,34 @@ def test_price_for_meets_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     cost_inc, est_inc = price_for("anthropic", "incomplete_model", 1000, 1000)
     assert cost_inc == 0.0
     assert est_inc is True
+
+
+@pytest.fixture(autouse=True)
+def _isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path))
+
+
+def _write_user_pricing(tmp_path: Path, text: str) -> None:
+    config = tmp_path / "config"
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "pricing.toml").write_text(text, encoding="utf-8")
+
+
+def test_the_users_pricing_file_is_actually_read(tmp_path: Path) -> None:
+    _write_user_pricing(tmp_path, '[openai."gpt-x"]\ninput_per_mtok = 2.0\noutput_per_mtok = 4.0\n')
+    cost, estimated = price_for("openai", "gpt-x", 1_000_000, 500_000)
+    assert estimated is False
+    assert cost == pytest.approx(4.0)
+
+
+def test_unknown_model_is_a_flagged_estimate_not_an_error(tmp_path: Path) -> None:
+    _write_user_pricing(tmp_path, '[openai."gpt-x"]\ninput_per_mtok = 2.0\noutput_per_mtok = 4.0\n')
+    assert price_for("openai", "other", 10, 10) == (0.0, True)
+    assert price_for("nobody", "m", 10, 10) == (0.0, True)
+
+
+def test_a_corrupt_pricing_file_is_reported_instead_of_silently_costing_zero(tmp_path: Path) -> None:
+    _write_user_pricing(tmp_path, "this is = = not toml [")
+    with pytest.raises(Exception) as info:  # noqa: PT011 - ConfigError lives in contracts, which this test does not import
+        price_for("openai", "gpt-x", 1, 1)
+    assert type(info.value).__name__ == "ConfigError"

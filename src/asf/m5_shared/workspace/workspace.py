@@ -28,6 +28,7 @@
 # ERRORS: Return WorkspaceResult(ok=False, error_kind=...) for conflict/lock/io; raise AsfError only when git is missing.
 # DONE WHEN: (1) tests/m5_shared/workspace/test_workspace.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/workspace/workspace.py` and `uv run mypy src/asf/m5_shared/workspace/workspace.py` are clean.
 
+import logging
 import shutil
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,8 @@ from typing import Any
 from asf.contracts.workspace import WorkspaceOp, WorkspaceResult
 from asf.m5_shared.workspace.blobs import BlobStore
 from asf.platform.select import get_platform
+
+logger = logging.getLogger(__name__)
 
 
 class Workspace:
@@ -129,7 +132,8 @@ class Workspace:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             lock_cm: Any = get_platform().lock_file(lock_path, timeout_s=10.0)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the lock backend raises platform-specific errors
+            logger.warning("could not take the workspace lock %s", lock_path, exc_info=True)
             return WorkspaceResult(ok=False, error_kind=f"lock_failed: {e}")
 
         with lock_cm:

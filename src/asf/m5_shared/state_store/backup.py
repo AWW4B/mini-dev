@@ -20,11 +20,14 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/state_store/test_backup.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/state_store/backup.py` and `uv run mypy src/asf/m5_shared/state_store/backup.py` are clean.
 
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 from asf.config.paths import AppPaths, get_paths  # noqa: F401
+
+logger = logging.getLogger(__name__)
 
 
 def backup_databases(db_paths: list[Path], dest_dir: Path, keep_last: int = 5) -> list[Path]:
@@ -67,7 +70,7 @@ def backup_databases(db_paths: list[Path], dest_dir: Path, keep_last: int = 5) -
                     continue
                 try:
                     old_p.unlink(missing_ok=True)
-                except Exception as _del_err:  # noqa: BLE001
-                    _ = _del_err
+                except OSError:
+                    logger.warning("could not delete the old backup %s", old_p, exc_info=True)
 
     return written

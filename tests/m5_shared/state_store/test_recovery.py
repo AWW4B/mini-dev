@@ -4,8 +4,9 @@
 # OWNS: Test cases for src/asf/m5_shared/state_store/recovery.py
 # DOES NOT OWN: Production code; fixtures shared with other modules (put those in tests/conftest.py)
 # CONNECTS TO (external boundaries only):
-#   - imports from src/asf/m5_shared/state_store/recovery.py: RecoveryReport, reconcile_on_startup (unit under test)
+#   - imports from src/asf/m5_shared/state_store/recovery.py: RecoveryError, RecoveryReport, reconcile_on_startup (unit under test)
 #   - imports from tests/conftest.py: fake_paths (shared fixtures)
+#   - imports from src/asf/m5_shared/state_store/store.py: StateStore (the real schema the recovery runs against)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -18,78 +19,171 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/state_store/test_recovery.py` on Windows and Linux once src/asf/m5_shared/state_store/recovery.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/state_store/test_recovery.py` and `uv run mypy tests/m5_shared/state_store/test_recovery.py` are clean.
 
-import sqlite3
+import json
+import logging
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
-from asf.m5_shared.state_store.recovery import RecoveryReport, reconcile_on_startup
+import pytest
+
+from asf.m5_shared.state_store.recovery import RecoveryError, RecoveryReport, reconcile_on_startup
+from asf.m5_shared.state_store.store import StateStore
+
+
+def _store(tmp_path: Path) -> StateStore:
+    store = StateStore.open(tmp_path / "state.db")
+    with store.conn:
+        store.conn.execute(
+            "INSERT INTO runs (run_id, project_id, status, version, created_at, last_activity, cost, cost_estimated, payload) "
+            "VALUES ('run-1', 'p', 'RUNNING', 1, 't', 't', 0, 0, '{}')"
+        )
+    return store
+
+
+def _add_task(store: StateStore, task_id: str, state: str, interruptions: int = 0, with_lease: bool = False) -> None:
+    payload = {
+        "id": task_id, "run_id": "run-1", "state": state, "kind": "leaf", "goal": "g",
+        "counters": {"interruptions": interruptions, "attempts": 2},
+    }
+    with store.conn:
+        store.conn.execute(
+            "INSERT INTO tasks (task_id, run_id, state, kind, version, title, payload) VALUES (?, 'run-1', ?, 'leaf', 1, 'g', ?)",
+            (task_id, state, json.dumps(payload)),
+        )
+        if with_lease:
+            store.conn.execute(
+                "INSERT INTO leases (lease_id, task_id, worker_id, expires_at) VALUES (?, ?, 'w', 't')", (f"l-{task_id}", task_id)
+            )
+
+
+def _task(store: StateStore, task_id: str) -> tuple[str, int, dict[str, Any]]:
+    row = store.conn.execute("SELECT state, version, payload FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    return str(row["state"]), int(row["version"]), json.loads(row["payload"])
+
+
+def _outbox(store: StateStore) -> list[dict[str, Any]]:
+    return [json.loads(r["payload"]) for r in store.conn.execute("SELECT payload FROM outbox ORDER BY id")]
+
+
+def _run(store: StateStore, workspace: Any = None, runtime: Any = None) -> RecoveryReport:
+    return reconcile_on_startup(store, workspace or MagicMock(), runtime or MagicMock(), MagicMock())
 
 
 def test_recovery_report_meets_contract() -> None:
-    """Prove RecoveryReport behaves as declared in src/asf/m5_shared/state_store/recovery.py."""
-    rep = RecoveryReport(
-        runs_checked=2,
-        tasks_reset=["task-1"],
-        tasks_escalated=["task-2"],
-        decisions_rearmed=3,
-    )
-    assert rep.runs_checked == 2
-    assert rep.tasks_reset == ["task-1"]
-    assert rep.tasks_escalated == ["task-2"]
-    assert rep.decisions_rearmed == 3
+    rep = RecoveryReport(runs_checked=2, tasks_reset=["task-1"], tasks_escalated=["task-2"], decisions_rearmed=3)
+    assert (rep.runs_checked, rep.tasks_reset, rep.tasks_escalated, rep.decisions_rearmed) == (2, ["task-1"], ["task-2"], 3)
 
 
-def test_reconcile_on_startup_meets_contract(tmp_path: Path, fake_paths: Any) -> None:
-    """Prove reconcile_on_startup behaves as declared in src/asf/m5_shared/state_store/recovery.py."""
+def test_interrupted_task_is_reset_through_the_real_schema(tmp_path: Path, fake_paths: Any) -> None:
     _ = fake_paths
+    store = _store(tmp_path)
+    _add_task(store, "t1", "RUNNING", interruptions=1, with_lease=True)
+    workspace = MagicMock()
 
-    # Set up in-memory or file-backed sqlite database with standard tables
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    with conn:
-        conn.execute("CREATE TABLE runs (run_id TEXT PRIMARY KEY, status TEXT NOT NULL);")
-        conn.execute(
-            "CREATE TABLE tasks (task_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, state TEXT NOT NULL, "
-            "interruption_count INTEGER NOT NULL DEFAULT 0, assigned_worker TEXT, lease_expires_at TEXT);"
-        )
-        conn.execute("CREATE TABLE leases (task_id TEXT PRIMARY KEY);")
-        conn.execute("CREATE TABLE decisions (decision_id TEXT PRIMARY KEY, status TEXT NOT NULL);")
+    report = _run(store, workspace)
 
-        conn.execute("INSERT INTO runs (run_id, status) VALUES ('run-1', 'RUNNING');")
-        # Task 1: running with 1 interruption -> should reset to READY (interruption_count=2)
-        conn.execute("INSERT INTO tasks (task_id, run_id, state, interruption_count) VALUES ('t1', 'run-1', 'RUNNING', 1);")
-        conn.execute("INSERT INTO leases (task_id) VALUES ('t1');")
-        # Task 2: running with 3 interruptions -> should escalate (new count 4 > 3)
-        conn.execute("INSERT INTO tasks (task_id, run_id, state, interruption_count) VALUES ('t2', 'run-1', 'RUNNING', 3);")
-        # Task 3: VERIFIED -> must NOT be touched
-        conn.execute("INSERT INTO tasks (task_id, run_id, state, interruption_count) VALUES ('t3', 'run-1', 'VERIFIED', 0);")
-        # Pending decision
-        conn.execute("INSERT INTO decisions (decision_id, status) VALUES ('d1', 'PENDING');")
+    assert report.tasks_reset == ["t1"] and report.tasks_escalated == []
+    state, version, payload = _task(store, "t1")
+    assert state == "READY" and version == 2
+    assert payload["state"] == "READY" and payload["prior_state"] == "RUNNING"
+    assert payload["counters"] == {"interruptions": 2, "attempts": 2}
+    assert store.conn.execute("SELECT COUNT(*) FROM leases").fetchone()[0] == 0
+    op = workspace.apply.call_args.args[0]
+    assert op.kind.value == "reset_to_base" and op.task_id == "t1"
 
-    fake_store = SimpleNamespace(conn=conn)
-    fake_workspace = MagicMock()
-    fake_runtime = MagicMock()
-    fake_broker = MagicMock()
 
-    report = reconcile_on_startup(fake_store, fake_workspace, fake_runtime, fake_broker)  # type: ignore[arg-type]
+def test_task_with_too_many_interruptions_is_escalated_and_its_worktree_untouched(tmp_path: Path, fake_paths: Any) -> None:
+    _ = fake_paths
+    store = _store(tmp_path)
+    _add_task(store, "t2", "RUNNING", interruptions=3)
+    workspace = MagicMock()
 
+    report = _run(store, workspace)
+
+    assert report.tasks_escalated == ["t2"] and report.tasks_reset == []
+    assert _task(store, "t2")[0] == "ESCALATED"
+    workspace.apply.assert_not_called()
+
+
+@pytest.mark.parametrize("state", ["VERIFIED", "INTEGRATED", "READY", "BLOCKED"])
+def test_tasks_that_were_not_running_are_never_modified(tmp_path: Path, fake_paths: Any, state: str) -> None:
+    _ = fake_paths
+    store = _store(tmp_path)
+    _add_task(store, "t3", state)
+    before = _task(store, "t3")
+    assert _run(store).tasks_reset == []
+    assert _task(store, "t3") == before
+
+
+def test_state_change_and_run_recovered_events_are_committed_with_the_transition(tmp_path: Path, fake_paths: Any) -> None:
+    _ = fake_paths
+    store = _store(tmp_path)
+    _add_task(store, "a", "RUNNING")
+    _add_task(store, "b", "RUNNING")
+    _run(store)
+
+    events = _outbox(store)
+    kinds = [e["kind"] for e in events]
+    assert kinds.count("state_changed") == 2
+    assert kinds.count("run_recovered") == 1  # once per run, not per task
+    assert {e["task_id"] for e in events if e["kind"] == "state_changed"} == {"a", "b"}
+    assert len({e["event_id"] for e in events}) == len(events)
+
+
+def test_a_second_recovery_changes_nothing(tmp_path: Path, fake_paths: Any) -> None:
+    _ = fake_paths
+    store = _store(tmp_path)
+    _add_task(store, "t1", "RUNNING")
+    _run(store)
+    snapshot = (_task(store, "t1"), len(_outbox(store)))
+    report = _run(store)
+    assert report.tasks_reset == [] and report.tasks_escalated == []
+    assert (_task(store, "t1"), len(_outbox(store))) == snapshot
+
+
+def test_worktree_reset_failure_leaves_the_task_running_and_is_reported(tmp_path: Path, fake_paths: Any) -> None:
+    _ = fake_paths
+    store = _store(tmp_path)
+    _add_task(store, "bad", "RUNNING", with_lease=True)
+    _add_task(store, "ok", "RUNNING")
+
+    def fail_for_bad(op: Any) -> None:
+        if op.task_id == "bad":
+            raise RuntimeError("git failed")
+
+    workspace = MagicMock()
+    workspace.apply.side_effect = fail_for_bad
+
+    with pytest.raises(RecoveryError) as info:
+        _run(store, workspace)
+
+    assert "bad" in str(info.value)
+    assert _task(store, "bad")[0] == "RUNNING"  # retried on the next start
+    assert store.conn.execute("SELECT COUNT(*) FROM leases WHERE task_id = 'bad'").fetchone()[0] == 1
+    assert _task(store, "ok")[0] == "READY"  # the others were still recovered
+
+
+def test_runtime_failure_is_logged_not_swallowed_and_does_not_stop_recovery(
+    tmp_path: Path, fake_paths: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    _ = fake_paths
+    store = _store(tmp_path)
+    runtime = MagicMock()
+    runtime.drop_stale.side_effect = OSError("nvml gone")
+    with caplog.at_level(logging.WARNING):
+        report = _run(store, runtime=runtime)
     assert report.runs_checked == 1
-    assert "t1" in report.tasks_reset
-    assert "t2" in report.tasks_escalated
-    assert report.decisions_rearmed == 1
+    assert any("re-probe failed" in r.getMessage() for r in caplog.records)
 
-    # Check updated task states in DB
-    cur = conn.execute("SELECT task_id, state, interruption_count FROM tasks")
-    states = {row["task_id"]: (row["state"], row["interruption_count"]) for row in cur.fetchall()}
-    assert states["t1"] == ("READY", 2)
-    assert states["t2"] == ("ESCALATED", 4)
-    assert states["t3"] == ("VERIFIED", 0)
 
-    # Check leases cleared
-    assert conn.execute("SELECT COUNT(*) FROM leases").fetchone()[0] == 0
-
-    # Check workspace reset was called for t1
-    fake_workspace.apply.assert_called_once()
-    fake_runtime.drop_stale.assert_called_once()
+def test_pending_decisions_are_counted(tmp_path: Path, fake_paths: Any) -> None:
+    _ = fake_paths
+    store = _store(tmp_path)
+    with store.conn:
+        for i, status in enumerate(["PENDING", "PENDING", "RESOLVED"]):
+            store.conn.execute(
+                "INSERT INTO decisions (decision_id, run_id, topic, status, version, payload) VALUES (?, 'run-1', 'clarify', ?, 1, '{}')",
+                (f"d{i}", status),
+            )
+    assert _run(store).decisions_rearmed == 2

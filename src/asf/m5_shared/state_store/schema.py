@@ -181,11 +181,17 @@ CREATE TABLE IF NOT EXISTS memory (
 
 def migrate(conn: sqlite3.Connection) -> None:
     """Create or upgrade all tables of state.db to SCHEMA_VERSION inside one transaction."""
+    # A connection opened with autocommit=False is always inside a transaction, and SQLite refuses to change
+    # journal_mode or synchronous inside one (so WAL was silently never enabled). Switch autocommit on for the pragmas.
+    previous_autocommit = conn.autocommit
+    conn.autocommit = True
     try:
-        conn.execute("PRAGMA journal_mode = WAL;")
-    except sqlite3.OperationalError:
-        pass
-    conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA journal_mode = WAL;")  # in-memory databases stay in 'memory' mode, which is fine
+        conn.execute("PRAGMA synchronous = NORMAL;")  # durable under WAL, and far fewer fsyncs than FULL
+        conn.execute("PRAGMA busy_timeout = 5000;")  # wait for the other process (viewer/supervisor) instead of failing at once
+        conn.execute("PRAGMA foreign_keys = ON;")
+    finally:
+        conn.autocommit = previous_autocommit
 
     with conn:
         conn.executescript(_CREATE_TABLES_SQL)

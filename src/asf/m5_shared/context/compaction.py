@@ -16,9 +16,12 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/context/test_compaction.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/context/compaction.py` and `uv run mypy src/asf/m5_shared/context/compaction.py` are clean.
 
+import logging
 from typing import Any, cast
 
 from asf.m5_shared.gateway.gateway import ModelGateway
+
+logger = logging.getLogger(__name__)
 
 
 def compact_history(gateway: ModelGateway, turns: list[str], budget_tokens: int) -> str:
@@ -40,7 +43,7 @@ def compact_history(gateway: ModelGateway, turns: list[str], budget_tokens: int)
         if isinstance(content, str) and content.strip():
             return content.strip()
         return str(response).strip()
-    except Exception as _err:  # noqa: BLE001
-        _ = _err
+    except Exception:  # noqa: BLE001 - the tiny model is optional: truncate instead, and say so
+        logger.warning("model compaction failed; truncating the history instead", exc_info=True)
         max_chars = budget_tokens * 4
         return history_text[:max_chars]

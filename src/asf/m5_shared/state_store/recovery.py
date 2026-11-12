@@ -8,7 +8,10 @@
 #   - imports from src/asf/m5_shared/workspace/workspace.py: Workspace (IF-15 reset worktrees)
 #   - imports from src/asf/m5_shared/runtime/local_runtime.py: LocalRuntime (drop stale slots)
 #   - imports from src/asf/m5_shared/decisions/broker.py: DecisionBroker (re-arm decisions)
-#   - called by tests/m5_shared/state_store/test_recovery.py: RecoveryReport, reconcile_on_startup
+#   - imports from src/asf/contracts/errors.py: AsfError (base of RecoveryError)
+#   - imports from src/asf/contracts/state.py: StateCommit (task transition plus STATE_CHANGED events)
+#   - imports from src/asf/contracts/workspace.py: WorkspaceOp (reset_to_base)
+#   - called by tests/m5_shared/state_store/test_recovery.py: RecoveryError, RecoveryReport, reconcile_on_startup
 #   - emits/consumes: emits RUN_RECOVERED and STATE_CHANGED events through StateStore.commit
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -24,15 +27,29 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/state_store/test_recovery.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/state_store/recovery.py` and `uv run mypy src/asf/m5_shared/state_store/recovery.py` are clean.
 
-from types import SimpleNamespace
-from typing import Any, cast
+import json
+import logging
+import uuid
+from datetime import UTC, datetime
+from typing import Any
 
 from pydantic import BaseModel
 
+from asf.contracts.errors import AsfError
+from asf.contracts.state import StateCommit
+from asf.contracts.workspace import WorkspaceOp
 from asf.m5_shared.decisions.broker import DecisionBroker
 from asf.m5_shared.runtime.local_runtime import LocalRuntime
 from asf.m5_shared.state_store.store import StateStore
 from asf.m5_shared.workspace.workspace import Workspace
+
+logger = logging.getLogger(__name__)
+
+MAX_INTERRUPTIONS = 3
+
+
+class RecoveryError(AsfError):
+    """Startup reconciliation could not reset every interrupted task; fix the cause and start again (nothing was lost)."""
 
 
 class RecoveryReport(BaseModel):
@@ -42,93 +59,90 @@ class RecoveryReport(BaseModel):
     decisions_rearmed: int
 
 
+def _event(run_id: str, task_id: str | None, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "event_id": f"evt-{uuid.uuid4().hex}",
+        "run_id": run_id,
+        "task_id": task_id,
+        "seq": 0,  # the event log assigns the real sequence number
+        "ts": datetime.now(UTC).isoformat(),
+        "actor": {"kind": "service", "role": "recovery", "name": "Startup recovery"},
+        "kind": kind,
+        "correlation_id": run_id,
+        "payload": payload,
+    }
+
+
 def reconcile_on_startup(
     store: StateStore,
     workspace: Workspace,
     runtime: LocalRuntime,
     broker: DecisionBroker,
 ) -> RecoveryReport:
-    _ = broker
+    _ = broker  # pending decisions live in the store and are re-armed simply by being counted and left PENDING
 
-    # 1. Runs checked
-    runs_checked = 0
-    try:
-        cur = store.conn.execute("SELECT COUNT(*) FROM runs")
-        row = cur.fetchone()
-        if row:
-            runs_checked = int(row[0])
-    except Exception as _run_err:  # noqa: BLE001
-        _ = _run_err
+    runs_checked = int(store.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0])
 
-    # 2. Expire leases: query running tasks (skip VERIFIED / INTEGRATED)
+    # 2. Expire leases of interrupted tasks (RUNNING -> READY, or ESCALATED after too many interruptions).
+    #    VERIFIED and INTEGRATED tasks are never selected, so they are never re-run or modified (rule 9).
     tasks_reset: list[str] = []
     tasks_escalated: list[str] = []
+    failed_resets: list[str] = []
+    recovered_runs: set[str] = set()
 
-    try:
-        cur = store.conn.execute(
-            "SELECT task_id, run_id, state, interruption_count FROM tasks WHERE state = 'RUNNING'"
-        )
-        running_tasks = cur.fetchall()
+    running = store.conn.execute("SELECT task_id, run_id, version, payload FROM tasks WHERE state = 'RUNNING' ORDER BY rowid").fetchall()
+    for row in running:
+        task_id, run_id, version = str(row["task_id"]), str(row["run_id"]), int(row["version"])
+        payload: dict[str, Any] = json.loads(row["payload"] or "{}")
+        counters: dict[str, Any] = dict(payload.get("counters") or {})
+        interruptions = int(counters.get("interruptions", 0)) + 1
+        counters["interruptions"] = interruptions
+        escalate = interruptions > MAX_INTERRUPTIONS
+        new_state = "ESCALATED" if escalate else "READY"
 
-        for row in running_tasks:
-            task_id = str(row[0])
-            interruptions = int(row[3]) if row[3] is not None else 0
-            new_interruptions = interruptions + 1
+        # 3. An interrupted worktree is reset to its base commit before the task may run again.
+        if not escalate:
+            try:
+                workspace.apply(WorkspaceOp.model_validate({"kind": "reset_to_base", "task_id": task_id}))
+            except Exception:  # noqa: BLE001 - git/worktree errors vary; the task stays RUNNING so the next start retries
+                logger.error("could not reset the worktree of task %s; leaving it RUNNING", task_id, exc_info=True)
+                failed_resets.append(task_id)
+                continue
 
-            if new_interruptions > 3:
-                new_state = "ESCALATED"
-                tasks_escalated.append(task_id)
-            else:
-                new_state = "READY"
-                tasks_reset.append(task_id)
-
-            with store.conn:
-                store.conn.execute(
-                    "UPDATE tasks SET state = ?, interruption_count = ?, assigned_worker = NULL, lease_expires_at = NULL "
-                    "WHERE task_id = ?",
-                    (new_state, new_interruptions, task_id),
-                )
-                try:
-                    store.conn.execute("DELETE FROM leases WHERE task_id = ?", (task_id,))
-                except Exception as _lease_err:  # noqa: BLE001
-                    _ = _lease_err
-    except Exception as _task_err:  # noqa: BLE001
-        _ = _task_err
-
-    # 3. Reset interrupted worktrees to base commit
-    for tid in tasks_reset:
-        try:
-            op = SimpleNamespace(
-                kind="reset_to_base",
-                task_id=tid,
-                branch=None,
-                base_commit=None,
+        events = [_event(run_id, task_id, "state_changed", {"entity": "task", "from": "RUNNING", "to": new_state, "interruptions": interruptions})]
+        if run_id not in recovered_runs:
+            events.append(_event(run_id, None, "run_recovered", {"reason": "restart"}))
+            recovered_runs.add(run_id)
+        store.commit(
+            StateCommit.model_validate(
+                {
+                    "entity": "task",
+                    "entity_id": task_id,
+                    "expected_version": version,
+                    "mutation": {"state": new_state, "prior_state": "RUNNING", "counters": counters},
+                    "events": events,
+                }
             )
-            workspace.apply(cast(Any, op))
-        except Exception as _ws_err:  # noqa: BLE001
-            _ = _ws_err
+        )
+        with store.conn:
+            store.conn.execute("DELETE FROM leases WHERE task_id = ?", (task_id,))
+        (tasks_escalated if escalate else tasks_reset).append(task_id)
 
-    # 4. Re-probe runtime: drop stale slots
+    # 4. Re-probe the runtime: drop slot leases whose holder is gone, and refresh the resource reading.
     try:
         runtime.drop_stale()
-    except Exception as _rt_err:  # noqa: BLE001
-        _ = _rt_err
+        runtime.probe.read()
+    except Exception:  # noqa: BLE001 - the runtime backends are optional; scheduling degrades to what it can measure
+        logger.warning("runtime re-probe failed; slot and resource state may be stale", exc_info=True)
 
-    if hasattr(runtime, "probe") and hasattr(runtime.probe, "probe_system"):
-        try:
-            runtime.probe.probe_system()
-        except Exception as _probe_err:  # noqa: BLE001
-            _ = _probe_err
+    # 5. Pending decisions stay PENDING in the store; count them so the caller can re-arm their timers.
+    decisions_rearmed = int(store.conn.execute("SELECT COUNT(*) FROM decisions WHERE status = 'PENDING'").fetchone()[0])
 
-    # 5. Re-arm decisions
-    decisions_rearmed = 0
-    try:
-        cur = store.conn.execute("SELECT COUNT(*) FROM decisions WHERE status = 'PENDING'")
-        row = cur.fetchone()
-        if row:
-            decisions_rearmed = int(row[0])
-    except Exception as _dec_err:  # noqa: BLE001
-        _ = _dec_err
+    if failed_resets:
+        raise RecoveryError(
+            f"Could not reset the worktrees of {len(failed_resets)} interrupted task(s): {', '.join(failed_resets)}. "
+            "They were left RUNNING; check the project's git state and start again."
+        )
 
     return RecoveryReport(
         runs_checked=runs_checked,

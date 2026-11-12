@@ -17,6 +17,12 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/context/test_memory.py` on Windows and Linux once src/asf/m5_shared/context/memory.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/context/test_memory.py` and `uv run mypy tests/m5_shared/context/test_memory.py` are clean.
 
+import logging
+import sqlite3
+from types import SimpleNamespace
+
+import pytest
+
 from asf.m5_shared.context.memory import ProjectMemory
 
 
@@ -60,3 +66,27 @@ def test_project_memory_meets_contract() -> None:
     assert len(mem.relevant(["database"])) == 0
     # CLI decision remains valid
     assert len(mem.relevant(["cli"])) == 1
+
+
+class _BrokenConn:
+    """A connection whose writes fail, standing in for a locked or full database."""
+
+    def __enter__(self) -> "_BrokenConn":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def execute(self, sql: str, *_args: object) -> object:
+        if sql.lstrip().upper().startswith("CREATE"):
+            return None
+        raise sqlite3.OperationalError("database is locked")
+
+
+def test_a_failed_save_is_logged_and_the_decision_stays_usable_in_memory(caplog: pytest.LogCaptureFixture) -> None:
+    store = SimpleNamespace(conn=_BrokenConn())
+    memory = ProjectMemory(store)  # type: ignore[arg-type]
+    with caplog.at_level(logging.ERROR):
+        memory.record_decision("use sqlite", ["db"], {})
+    assert memory.relevant(["db"]) == ["use sqlite"]
+    assert any("could not persist decision" in r.getMessage() for r in caplog.records)

@@ -7,6 +7,7 @@
 #   - imports from src/asf/contracts/events.py: EventEnvelope (outbox events committed in the same transaction)
 #   - called by src/asf/m5_shared/state_store/store.py: StateCommit
 #   - called by tests/contracts/test_state.py: StateCommit
+#   - called by src/asf/m5_shared/state_store/recovery.py: StateCommit
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

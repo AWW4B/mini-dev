@@ -18,10 +18,14 @@
 # DONE WHEN: (1) tests/m5_shared/context/test_memory.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/context/memory.py` and `uv run mypy src/asf/m5_shared/context/memory.py` are clean.
 
 import json
+import logging
+import sqlite3
 import uuid
 from typing import Any
 
 from asf.m5_shared.state_store.store import StateStore
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectMemory:
@@ -62,8 +66,8 @@ class ProjectMemory:
                     "source_hashes": json.loads(row[3]) if isinstance(row[3], str) else {},
                     "valid": bool(row[4]),
                 })
-        except Exception as _load_err:  # noqa: BLE001
-            _ = _load_err
+        except (sqlite3.Error, ValueError):
+            logger.error("could not load the project decisions; starting with an empty memory", exc_info=True)
 
     def record_decision(self, text: str, tags: list[str], source_hashes: dict[str, str]) -> None:
         entry_id = str(uuid.uuid4())
@@ -83,8 +87,8 @@ class ProjectMemory:
                         "INSERT INTO project_decisions (id, text, tags, source_hashes, valid) VALUES (?, ?, ?, ?, 1)",
                         (entry_id, text, json.dumps(tags), json.dumps(source_hashes)),
                     )
-            except Exception as _db_err:  # noqa: BLE001
-                _ = _db_err
+            except sqlite3.Error:
+                logger.error("could not persist decision %s; it is kept in memory only", entry_id, exc_info=True)
 
     def relevant(self, tags: list[str], limit: int = 10) -> list[str]:
         req_tags = {t.lower() for t in tags}
@@ -125,7 +129,7 @@ class ProjectMemory:
                                 "UPDATE project_decisions SET valid = 0 WHERE id = ?",
                                 (e["id"],),
                             )
-                    except Exception as _update_err:  # noqa: BLE001
-                        _ = _update_err
+                    except sqlite3.Error:
+                        logger.error("could not persist the invalidation of decision %s", e["id"], exc_info=True)
 
         return invalidated_count

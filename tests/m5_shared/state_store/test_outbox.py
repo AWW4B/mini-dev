@@ -23,6 +23,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from asf.m5_shared.state_store.outbox import OutboxRelay
 
 
@@ -104,3 +106,97 @@ def test_outbox_relay_meets_contract(tmp_path: Path) -> None:
     assert relay.relay_once(max_rows=10) == 0
 
     conn.close()
+
+
+def _outbox_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE, run_id TEXT NOT NULL, "
+        "payload TEXT NOT NULL, published INTEGER NOT NULL DEFAULT 0, created_at TEXT)"
+    )
+    return conn
+
+
+def _event(event_id: str, **payload: Any) -> str:
+    return json.dumps(
+        {
+            "event_id": event_id,
+            "run_id": "run-1",
+            "seq": 0,
+            "ts": "2026-11-08T12:00:00Z",
+            "actor": {"kind": "service", "role": "system", "name": "S"},
+            "kind": "state_changed",
+            "correlation_id": "c",
+            "payload": payload,
+        }
+    )
+
+
+def test_relay_hands_the_log_validated_envelopes_with_nested_payloads() -> None:
+    conn = _outbox_conn()
+    conn.execute("INSERT INTO outbox (event_id, run_id, payload) VALUES (?, ?, ?)", ("e1", "run-1", _event("e1", nested={"a": [1, 2]})))
+    conn.commit()
+    seen: list[Any] = []
+
+    class Log:
+        def append(self, events: list[Any]) -> list[int]:
+            seen.extend(events)
+            return [1]
+
+    OutboxRelay(store=SimpleNamespace(conn=conn), log=Log()).relay_once()  # type: ignore[arg-type]
+    assert seen[0].kind.value == "state_changed"
+    assert seen[0].payload == {"nested": {"a": [1, 2]}}
+    assert isinstance(seen[0].payload, dict)
+
+
+def test_one_invalid_row_is_quarantined_and_does_not_block_the_rest() -> None:
+    conn = _outbox_conn()
+    conn.execute("INSERT INTO outbox (event_id, run_id, payload) VALUES (?, ?, ?)", ("bad", "run-1", '{"event_id": "bad"}'))
+    conn.execute("INSERT INTO outbox (event_id, run_id, payload) VALUES (?, ?, ?)", ("good", "run-1", _event("good")))
+    conn.commit()
+    appended: list[str] = []
+
+    class Log:
+        def append(self, events: list[Any]) -> list[int]:
+            appended.extend(str(e.event_id) for e in events)
+            return list(range(len(events)))
+
+    relay = OutboxRelay(store=SimpleNamespace(conn=conn), log=Log())  # type: ignore[arg-type]
+    assert relay.relay_once() == 1
+    assert appended == ["good"]
+    states = {r["event_id"]: r["published"] for r in conn.execute("SELECT event_id, published FROM outbox")}
+    assert states == {"bad": -1, "good": 1}
+    assert relay.relay_once() == 0  # the quarantined row is not retried
+
+
+def test_rows_stay_pending_when_the_log_append_fails() -> None:
+    conn = _outbox_conn()
+    conn.execute("INSERT INTO outbox (event_id, run_id, payload) VALUES (?, ?, ?)", ("e1", "run-1", _event("e1")))
+    conn.commit()
+
+    class Log:
+        def append(self, events: list[Any]) -> list[int]:
+            raise RuntimeError("disk full")
+
+    with pytest.raises(RuntimeError):
+        OutboxRelay(store=SimpleNamespace(conn=conn), log=Log()).relay_once()  # type: ignore[arg-type]
+    assert conn.execute("SELECT published FROM outbox").fetchone()["published"] == 0
+
+
+def test_relay_respects_max_rows_and_commit_order() -> None:
+    conn = _outbox_conn()
+    for i in range(5):
+        conn.execute("INSERT INTO outbox (event_id, run_id, payload) VALUES (?, ?, ?)", (f"e{i}", "run-1", _event(f"e{i}")))
+    conn.commit()
+    order: list[str] = []
+
+    class Log:
+        def append(self, events: list[Any]) -> list[int]:
+            order.extend(str(e.event_id) for e in events)
+            return list(range(len(events)))
+
+    relay = OutboxRelay(store=SimpleNamespace(conn=conn), log=Log())  # type: ignore[arg-type]
+    assert relay.relay_once(max_rows=2) == 2
+    assert relay.relay_once(max_rows=10) == 3
+    assert order == ["e0", "e1", "e2", "e3", "e4"]
