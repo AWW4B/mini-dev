@@ -19,6 +19,7 @@
 #   - called by src/asf/m4_execution/integration/integrator.py: RootIntegrated
 #   - called by tests/contracts/test_outcomes.py: FailureClass, TaskOutcome, ChangeSet, Requeue, ApprovedPlan, DecompositionReport, RootIntegrated
 #   - called by tests/m4_execution/test_scheduler.py: Requeue, TaskOutcome
+#   - called by tests/m3_orchestration/test_escalation.py: TaskOutcome
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
