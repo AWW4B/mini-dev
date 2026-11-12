@@ -9,6 +9,7 @@
 #   - imports from src/asf/m5_shared/state_store/store.py: StateStore (IF-16 state)
 #   - imports from src/asf/contracts/decisions.py: DecisionRequest (ESCALATION / BUDGET_RAISE / MANUAL_SPLIT requests)
 #   - called by tests/m3_orchestration/test_escalation.py: handle_escalation
+#   - called by src/asf/m3_orchestration/run_graph.py: handle_escalation
 #   - emits/consumes: raises DecisionRequest kinds ESCALATION, BUDGET_RAISE, MANUAL_SPLIT
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

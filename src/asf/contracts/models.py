@@ -14,6 +14,7 @@
 #   - called by src/asf/m4_execution/scheduler.py: SlotLease, SlotLeaseRequest
 #   - called by src/asf/m3_orchestration/decomposition/decomposition_graph.py: ModelProfile
 #   - called by tests/m3_orchestration/decomposition/test_sizer.py: ModelProfile
+#   - called by src/asf/m3_orchestration/run_graph.py: ModelProfile
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

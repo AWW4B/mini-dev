@@ -16,6 +16,7 @@
 #   - called by src/asf/cli/commands/init.py: AppPaths, get_paths
 #   - called by tests/conftest.py: AppPaths
 #   - called by tests/config/test_paths.py: AppPaths, get_paths
+#   - called by src/asf/m3_orchestration/run_graph.py: get_paths
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

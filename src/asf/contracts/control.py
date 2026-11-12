@@ -10,6 +10,7 @@
 #   - called by src/asf/m4_execution/scheduler.py: CancelSignal
 #   - called by src/asf/cli/run_controls.py: RunControl, RunCommand
 #   - called by tests/contracts/test_control.py: RunCommand, RunControl, CancelSignal
+#   - called by tests/m3_orchestration/test_run_control.py: RunControl
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

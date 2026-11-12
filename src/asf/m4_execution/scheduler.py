@@ -16,6 +16,7 @@
 #   - called by src/asf/m3_orchestration/decomposition/decomposition_graph.py: TaskScheduler
 #   - called by src/asf/m4_execution/integration/integrator.py: TaskScheduler
 #   - called by tests/m4_execution/test_scheduler.py: MAX_INFRA_RETRIES, TaskScheduler
+#   - called by src/asf/m3_orchestration/run_graph.py: TaskScheduler
 #   - emits/consumes: emits STATE_CHANGED and HANDOFF_SENT (scheduler -> worker, causation = the READY event)
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

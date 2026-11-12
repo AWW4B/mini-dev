@@ -12,6 +12,7 @@
 #   - called by src/asf/m3_orchestration/run_control.py: LocalRuntime
 #   - called by src/asf/m4_execution/scheduler.py: LocalRuntime
 #   - called by tests/m5_shared/runtime/test_local_runtime.py: LocalRuntime
+#   - called by src/asf/m3_orchestration/run_graph.py: LocalRuntime
 #   - emits/consumes: emits SLOT_FREE events (consumed by the scheduler)
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

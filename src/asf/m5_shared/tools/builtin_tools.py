@@ -9,6 +9,7 @@
 #   - called by src/asf/m3_orchestration/acceptance.py: run_tests
 #   - called by tests/m5_shared/tools/test_builtin_tools.py: read_file, write_file, search_code, run_tests, run_linter, register_builtin_tools
 #   - called by tests/m5_shared/tools/test_executor.py: register_builtin_tools
+#   - called by src/asf/m3_orchestration/run_graph.py: register_builtin_tools
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

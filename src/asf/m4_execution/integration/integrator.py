@@ -13,6 +13,7 @@
 #   - imports from src/asf/contracts/state.py: StateCommit (task transitions plus events)
 #   - imports from src/asf/contracts/tasks.py: LeafTaskSpec, TaskNode (repair leaf)
 #   - called by tests/m4_execution/integration/test_integrator.py: build_integration_graph, integrate_parent
+#   - called by src/asf/m3_orchestration/run_graph.py: integrate_parent
 #   - emits/consumes: emits GATE_RESULT for integration tests and STATE_CHANGED INTEGRATED
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
