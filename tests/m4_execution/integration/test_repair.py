@@ -17,10 +17,63 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m4_execution/integration/test_repair.py` on Windows and Linux once src/asf/m4_execution/integration/repair.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m4_execution/integration/test_repair.py` and `uv run mypy tests/m4_execution/integration/test_repair.py` are clean.
 
+from typing import Any
 
-from asf.m4_execution.integration.repair import make_repair_task  # noqa: F401
+import pytest
+
+from asf.m4_execution.integration.repair import make_repair_task
 
 
-def test_make_repair_task_meets_contract() -> None:
-    """Prove make_repair_task behaves as declared in src/asf/m4_execution/integration/repair.py."""
-    raise NotImplementedError("write this test before implementing make_repair_task")
+class _Parent:
+    """Duck-typed TaskNode: the repair only reads these attributes."""
+
+    def __init__(self, **over: Any) -> None:
+        self.id = "p1"
+        self.run_id = "r1"
+        self.goal = "integrate the billing module"
+        self.contract_refs = ["billing@1.0.0"]
+        self.allowed_files = ["src/billing.py"]
+        self.priority = 3
+        self.depth = 2
+        self.__dict__.update(over)
+
+
+def test_first_failure_creates_a_scoped_repair_leaf() -> None:
+    node = make_repair_task(_Parent(), "sha256:abc", 0)  # type: ignore[arg-type]
+    assert node is not None
+    assert node.kind.value == "repair"
+    assert node.parent_id == "p1" and node.run_id == "r1"
+    assert node.acceptance_refs == ["sha256:abc"]
+    assert node.allowed_files == ["src/billing.py"]
+    assert node.contract_refs == ["billing@1.0.0"]
+    assert node.priority == 4 and node.depth == 3
+    assert node.state.value == "PROPOSED"
+    assert node.counters.repair_rounds == 1
+    assert "billing" in node.goal and "sha256:abc" in node.goal
+
+
+def test_ids_and_idempotency_keys_are_deterministic_per_round() -> None:
+    first = make_repair_task(_Parent(), "sha256:abc", 0)  # type: ignore[arg-type]
+    again = make_repair_task(_Parent(), "sha256:abc", 0)  # type: ignore[arg-type]
+    second = make_repair_task(_Parent(), "sha256:def", 1)  # type: ignore[arg-type]
+    assert first is not None and again is not None and second is not None
+    assert first.id == again.id and first.idempotency_key == again.idempotency_key
+    assert second.id != first.id and second.idempotency_key != first.idempotency_key
+
+
+def test_repair_rounds_are_bounded() -> None:
+    assert make_repair_task(_Parent(), "sha256:abc", 2) is None  # type: ignore[arg-type]
+    assert make_repair_task(_Parent(), "sha256:abc", 7) is None  # type: ignore[arg-type]
+
+
+def test_negative_round_is_a_programming_error() -> None:
+    with pytest.raises(ValueError):
+        make_repair_task(_Parent(), "sha256:abc", -1)  # type: ignore[arg-type]
+
+
+def test_repair_does_not_share_lists_with_the_parent() -> None:
+    parent = _Parent()
+    node = make_repair_task(parent, "sha256:abc", 0)  # type: ignore[arg-type]
+    assert node is not None
+    node.allowed_files.append("src/other.py")
+    assert parent.allowed_files == ["src/billing.py"]

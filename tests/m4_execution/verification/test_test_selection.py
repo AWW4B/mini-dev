@@ -17,10 +17,47 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m4_execution/verification/test_test_selection.py` on Windows and Linux once src/asf/m4_execution/verification/test_selection.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m4_execution/verification/test_test_selection.py` and `uv run mypy tests/m4_execution/verification/test_test_selection.py` are clean.
 
+from pathlib import Path
 
-from asf.m4_execution.verification.test_selection import select_tests  # noqa: F401
+from asf.m4_execution.verification.test_selection import select_tests
 
 
-def test_select_tests_meets_contract() -> None:
-    """Prove select_tests behaves as declared in src/asf/m4_execution/verification/test_selection.py."""
-    raise NotImplementedError("write this test before implementing select_tests")
+def _write(root: Path, rel: str, text: str = "x = 1\n") -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _change(root: Path, touched: list[str]) -> object:
+    class _Change:
+        worktree_path = str(root)
+        files_touched = touched
+
+    return _Change()
+
+
+def test_acceptance_tests_come_first_then_contract_then_mapped_tests(tmp_path: Path) -> None:
+    _write(tmp_path, "src/billing.py", "def charge(): pass\n")
+    _write(tmp_path, "tests/test_billing.py", "def test_charge(): pass\n")
+    _write(tmp_path, "tests/contracts/test_billing_contract.py", "from billing import charge\n")
+    _write(tmp_path, "tests/test_unrelated.py")
+
+    selected = select_tests(_change(tmp_path, ["src/billing.py"]), ["tests/acceptance/test_checkout.py"])  # type: ignore[arg-type]
+
+    assert selected[0] == "tests/acceptance/test_checkout.py"
+    assert "tests/contracts/test_billing_contract.py" in selected
+    assert "tests/test_billing.py" in selected
+    assert selected.index("tests/contracts/test_billing_contract.py") < selected.index("tests/test_billing.py")
+    assert "tests/test_unrelated.py" not in selected
+
+
+def test_a_touched_test_file_is_selected_and_nothing_is_duplicated(tmp_path: Path) -> None:
+    _write(tmp_path, "src/billing.py")
+    _write(tmp_path, "tests/test_billing.py")
+    selected = select_tests(_change(tmp_path, ["src/billing.py", "tests/test_billing.py"]), ["tests/test_billing.py"])  # type: ignore[arg-type]
+    assert selected.count("tests/test_billing.py") == 1
+
+
+def test_no_touched_sources_and_no_acceptance_selects_nothing(tmp_path: Path) -> None:
+    _write(tmp_path, "README.md", "hello\n")
+    assert select_tests(_change(tmp_path, ["README.md"]), []) == []  # type: ignore[arg-type]

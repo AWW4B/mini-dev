@@ -17,10 +17,57 @@
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m4_execution/verification/test_reviewer.py` on Windows and Linux once src/asf/m4_execution/verification/reviewer.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m4_execution/verification/test_reviewer.py` and `uv run mypy tests/m4_execution/verification/test_reviewer.py` are clean.
 
+from types import SimpleNamespace
+from typing import Any
 
-from asf.m4_execution.verification.reviewer import review_change  # noqa: F401
+from asf.m4_execution.verification.reviewer import review_change
+
+CHANGE = SimpleNamespace(files_touched=["src/billing.py"], self_report="added charge()")
 
 
-def test_review_change_meets_contract() -> None:
-    """Prove review_change behaves as declared in src/asf/m4_execution/verification/reviewer.py."""
-    raise NotImplementedError("write this test before implementing review_change")
+class _Gateway:
+    def __init__(self, answer: str | Exception) -> None:
+        self.answer = answer
+        self.prompts: list[str] = []
+        self.roles: list[Any] = []
+
+    def model_for(self, role: Any, purpose: str, **_: Any) -> Any:
+        self.roles.append(role)
+        outer = self
+
+        class _Model:
+            def invoke(self, prompt: str) -> Any:
+                outer.prompts.append(prompt)
+                if isinstance(outer.answer, Exception):
+                    raise outer.answer
+                return SimpleNamespace(content=outer.answer)
+
+        return _Model()
+
+
+def test_without_a_gateway_the_review_is_skipped() -> None:
+    assert review_change(CHANGE, ["charge(amount) -> Receipt"]) == []  # type: ignore[arg-type]
+
+
+def test_only_blocking_findings_are_returned() -> None:
+    answer = (
+        'Here you go: [{"blocking": true, "finding": "charge() returns None, the contract says Receipt"},'
+        ' {"blocking": false, "finding": "naming"}, {"blocking": true, "finding": "  "}]'
+    )
+    gateway = _Gateway(answer)
+    findings = review_change(CHANGE, ["charge(amount) -> Receipt"], gateway=gateway, diff_text="+def charge(): pass")  # type: ignore[arg-type]
+    assert findings == ["charge() returns None, the contract says Receipt"]
+    assert gateway.roles == ["reviewer"]
+    assert "charge(amount) -> Receipt" in gateway.prompts[0] and "+def charge(): pass" in gateway.prompts[0]
+
+
+def test_garbage_or_failing_model_output_yields_no_findings() -> None:
+    assert review_change(CHANGE, [], gateway=_Gateway("looks fine to me"))  == []  # type: ignore[arg-type]
+    assert review_change(CHANGE, [], gateway=_Gateway("[not json"))  == []  # type: ignore[arg-type]
+    assert review_change(CHANGE, [], gateway=_Gateway(RuntimeError("budget exceeded"))) == []  # type: ignore[arg-type]
+
+
+def test_a_huge_diff_is_truncated_in_the_prompt() -> None:
+    gateway = _Gateway("[]")
+    review_change(CHANGE, [], gateway=gateway, diff_text="x" * 100_000)  # type: ignore[arg-type]
+    assert len(gateway.prompts[0]) < 20_000
