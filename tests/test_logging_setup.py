@@ -54,3 +54,13 @@ def test_configure_logging_idempotent(fake_paths: Any) -> None:
     root = logging.getLogger()
     # Should not accumulate unbounded handlers
     assert len(root.handlers) <= 10, "Handler accumulation detected"
+
+
+def test_redaction_processor_cleans_the_event_and_every_string_field() -> None:
+    import asf.logging_setup as logging_mod
+
+    processor = logging_mod._make_redact_processor()
+    out = processor(None, "info", {"event": "key sk-abcdefghijklmnopqrstuvwxyz0123 used", "detail": "Bearer abcdefghijklmnopqrstuvwxyz", "count": 3})
+    assert "sk-" not in out["event"]
+    assert "abcdefghijklmnopqrstuvwxyz" not in out["detail"]
+    assert out["count"] == 3

@@ -34,25 +34,14 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _make_redact_processor() -> Any:
-    """Return a structlog processor that redacts secrets from log event dicts.
+    """Return a structlog processor that redacts secret shapes from the event text and every string field."""
+    from asf.m5_shared.events.redaction import redact_text
 
-    If the redaction module is still a stub (NotImplementedError), fall back
-    to a no-op processor so logging still works.
-    """
-    try:
-        from asf.m5_shared.events.redaction import redact_text
+    def _processor(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
+        # redact_text never raises and fails closed, so a redaction problem can not leak a secret into a log file
+        return {key: redact_text(value) if isinstance(value, str) else value for key, value in event_dict.items()}
 
-        def _processor(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG001
-            if "event" in event_dict and isinstance(event_dict["event"], str):
-                try:
-                    event_dict["event"] = redact_text(event_dict["event"])
-                except (NotImplementedError, Exception) as _err:  # noqa: BLE001
-                    _LOGGER.debug("redact_text failed: %s", _err)
-            return event_dict
-
-        return _processor
-    except (ImportError, NotImplementedError):
-        return structlog.processors.StackInfoRenderer()
+    return _processor
 
 
 def configure_logging(level: str = "INFO", json_console: bool = False) -> None:

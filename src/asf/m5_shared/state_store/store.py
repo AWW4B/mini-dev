@@ -92,6 +92,7 @@ class StateStore:
             uri = f"file:{db_path.resolve().as_posix()}?mode=ro"
             conn = sqlite3.connect(uri, uri=True)
             conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout = 5000;")
             return cls(conn, db_path, readonly=True)
 
         db_path.parent.mkdir(parents=True, exist_ok=True)

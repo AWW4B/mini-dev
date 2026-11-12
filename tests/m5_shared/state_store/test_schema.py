@@ -74,3 +74,13 @@ def test_s_c_h_e_m_a__v_e_r_s_i_o_n_meets_contract() -> None:
     """Prove SCHEMA_VERSION behaves as declared in src/asf/m5_shared/state_store/schema.py."""
     assert isinstance(SCHEMA_VERSION, int)
     assert SCHEMA_VERSION >= 1
+
+
+def test_migrate_really_enables_wal_normal_sync_and_foreign_keys(tmp_path: Path) -> None:
+    conn = sqlite3.connect(str(tmp_path / "state.db"), autocommit=False)
+    migrate(conn)
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    conn.close()

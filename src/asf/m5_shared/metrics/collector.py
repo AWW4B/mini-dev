@@ -153,14 +153,13 @@ class MetricsCollector:
             "duration_ms, timestamp FROM call_metrics WHERE run_id = ? ORDER BY id ASC",
             (run_id,),
         )
-        call_rows = cur.fetchall()
         with calls_path.open("w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
                 "id", "run_id", "task_id", "provider", "model", "input_tokens",
                 "output_tokens", "cost", "duration_ms", "timestamp",
             ])
-            for r in call_rows:
+            for r in cur:
                 writer.writerow(list(r))
         created_files.append(calls_path.as_posix())
 
@@ -171,11 +170,10 @@ class MetricsCollector:
             "FROM tool_metrics WHERE run_id = ? ORDER BY id ASC",
             (run_id,),
         )
-        tool_rows = cur.fetchall()
         with tools_path.open("w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["id", "run_id", "task_id", "tool_name", "duration_ms", "success", "timestamp"])
-            for r in tool_rows:
+            for r in cur:
                 writer.writerow(list(r))
         created_files.append(tools_path.as_posix())
 
@@ -185,11 +183,10 @@ class MetricsCollector:
             "SELECT id, run_id, kind, details, timestamp FROM limit_events WHERE run_id = ? ORDER BY id ASC",
             (run_id,),
         )
-        limit_rows = cur.fetchall()
         with limits_path.open("w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["id", "run_id", "kind", "details", "timestamp"])
-            for r in limit_rows:
+            for r in cur:
                 writer.writerow(list(r))
         created_files.append(limits_path.as_posix())
 
