@@ -18,6 +18,7 @@
 #   - called by src/asf/m4_execution/verification/gate.py: ChangeSet, Requeue, TaskOutcome
 #   - called by src/asf/m4_execution/integration/integrator.py: RootIntegrated
 #   - called by tests/contracts/test_outcomes.py: FailureClass, TaskOutcome, ChangeSet, Requeue, ApprovedPlan, DecompositionReport, RootIntegrated
+#   - called by tests/m4_execution/test_scheduler.py: Requeue, TaskOutcome
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
