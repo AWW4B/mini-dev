@@ -21,6 +21,7 @@
 #   - called by src/asf/m4_execution/verification/reviewer.py: ModelGateway
 #   - called by src/asf/cli/commands/models.py: ModelGateway
 #   - called by tests/m5_shared/gateway/test_gateway.py: ModelGateway
+#   - called by src/asf/m4_execution/worker/worker_graph.py: ModelGateway
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
