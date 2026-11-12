@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SKIP_DIRS = {".git", ".venv", "__pycache__", ".mypy_cache", ".ruff_cache", ".pytest_cache"}
-SKIP_FILES = {"uv.lock", "requirements.lock.txt"}
+SKIP_FILES = {"uv.lock", "requirements.lock.txt", "AI_Software_Factory_Research_and_Decisions.md"}  # research doc compares sandbox options by name
 # patterns are assembled from pieces so this file does not match itself
 ANYWHERE = [
     ("container runtime reference", re.compile("dock" + "er|podm" + "an", re.I)),
