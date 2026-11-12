@@ -17,10 +17,13 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m2_request/test_prompt_normalisation.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m2_request/prompt_normalisation.py` and `uv run mypy src/asf/m2_request/prompt_normalisation.py` are clean.
 
+import logging
 import re
 from typing import Any, cast
 
 from asf.m5_shared.gateway.gateway import ModelGateway
+
+logger = logging.getLogger(__name__)
 
 _UNICODE_REPLACEMENTS = {
     "\u201c": '"',
@@ -80,8 +83,8 @@ def normalise_prompt(text: str, gateway: ModelGateway | None = None) -> str:
             if isinstance(content, str) and content.strip():
                 return content.strip()
             return str(resp).strip()
-        except Exception as _err:  # noqa: BLE001
-            _ = _err
+        except Exception:  # noqa: BLE001 - any model/provider failure degrades to the deterministic cleanup
+            logger.warning("model cleanup of the prompt failed; using the deterministic cleanup", exc_info=True)
             return deterministic
 
     return deterministic
