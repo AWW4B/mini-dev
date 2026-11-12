@@ -77,7 +77,7 @@ class _Heartbeat:
         while not self._stop.wait(self._interval):
             try:
                 self._runtime.heartbeat(self._lease_id)
-            except KeyError:
+            except (KeyError, AsfError):  # LocalRuntime.heartbeat raises AsfError for an unknown or expired lease
                 logger.warning("lease %s expired while the attempt was running", self._lease_id)
                 return
 
