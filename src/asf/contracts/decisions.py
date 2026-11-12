@@ -12,6 +12,8 @@
 #   - called by tests/contracts/test_decisions.py: DecisionKind, DecisionRequest, DecisionResolved, NEVER_AUTO_APPROVED
 #   - called by src/asf/m5_shared/tools/executor.py: DecisionRequest
 #   - called by src/asf/m3_orchestration/escalation.py: DecisionRequest
+#   - called by src/asf/m3_orchestration/planning/test_authoring.py: DecisionRequest
+#   - called by src/asf/m3_orchestration/planning/planner_graph.py: DecisionRequest
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

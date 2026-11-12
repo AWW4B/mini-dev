@@ -14,6 +14,9 @@
 #   - called by src/asf/cli/project_input.py: SubmitRequest, TaskType
 #   - called by tests/contracts/test_requests.py: TaskType, SubmitRequest, Requirement, RepoProfile, StructuredRequest
 #   - called by tests/m3_orchestration/test_acceptance.py: StructuredRequest
+#   - called by src/asf/m3_orchestration/planning/planner_graph.py: StructuredRequest
+#   - called by tests/m3_orchestration/planning/test_modes.py: StructuredRequest
+#   - called by tests/m3_orchestration/planning/test_planner_graph.py: StructuredRequest
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

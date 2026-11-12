@@ -25,6 +25,11 @@
 #   - called by src/asf/m5_shared/workspace/blobs.py: AsfError
 #   - called by src/asf/m4_execution/worker/worker_graph.py: AsfError
 #   - called by tests/m3_orchestration/test_lifecycle.py: StateConflict
+#   - called by src/asf/m3_orchestration/planning/strategies.py: InvalidModelOutput
+#   - called by src/asf/m3_orchestration/planning/test_authoring.py: ApprovalRequired, BudgetExceeded, InvalidModelOutput, ProviderUnavailable
+#   - called by src/asf/m3_orchestration/planning/planner_graph.py: ApprovalRequired, ProviderUnavailable
+#   - called by tests/m3_orchestration/planning/test_test_authoring.py: ProviderUnavailable
+#   - called by tests/m3_orchestration/planning/test_planner_graph.py: ProviderUnavailable
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
