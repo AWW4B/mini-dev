@@ -21,6 +21,9 @@
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+import asf.m5_shared.context.repo_index as index_mod
 from asf.m5_shared.context.repo_index import RepoIndex
 
 
@@ -73,3 +76,74 @@ def test_repo_index_meets_contract(tmp_path: Path, fake_paths: Any) -> None:
 
     search_fn = index.search("multiply")
     assert any("calc.py" in h for h in search_fn)
+
+
+def _write(root: Path, rel: str, text: str) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_file_text_is_not_kept_in_memory_but_is_still_searchable(tmp_path: Path, fake_paths: Any) -> None:
+    _ = fake_paths
+    marker = "unique_marker_phrase_for_search"
+    _write(tmp_path, "docs/notes.md", f"# Notes\n{marker}\n" + "filler line\n" * 1000)
+    index = RepoIndex()
+    index.build(tmp_path)
+
+    retained = [v for v in vars(index).values() if isinstance(v, (dict, list))]
+    assert marker not in repr(retained)
+    assert index.search(marker) == ["docs/notes.md"]
+
+
+def test_vendored_and_oversized_files_are_not_indexed(tmp_path: Path, fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    _ = fake_paths
+    monkeypatch.setattr(index_mod, "MAX_INDEXED_FILE_BYTES", 100)
+    _write(tmp_path, "node_modules/dep/index.py", "def vendored(): pass\n")
+    _write(tmp_path, ".venv/lib/mod.py", "def venv_fn(): pass\n")
+    _write(tmp_path, "big.py", "def big_fn(): pass\n" + "# padding\n" * 50)
+    _write(tmp_path, "ok.py", "def ok_fn(): pass\n")
+    index = RepoIndex()
+    index.build(tmp_path)
+    assert index.symbols_for(["ok.py"]) == ["def ok_fn"]
+    assert index.symbols_for(["node_modules/dep/index.py", ".venv/lib/mod.py", "big.py"]) == []
+    assert index.search("") == ["ok.py"]
+
+
+def test_invalid_python_still_yields_symbols_from_a_line_scan(tmp_path: Path, fake_paths: Any) -> None:
+    _ = fake_paths
+    _write(tmp_path, "broken.py", "def alive(:\n    pass\nclass Thing:\n")
+    index = RepoIndex()
+    index.build(tmp_path)
+    symbols = index.symbols_for(["broken.py"])
+    assert "class Thing" in symbols
+
+
+def test_search_stops_reading_files_once_it_has_enough_hits(tmp_path: Path, fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    _ = fake_paths
+    for i in range(30):
+        _write(tmp_path, f"f{i:02d}.txt", "needle in a haystack\n")
+    index = RepoIndex()
+    index.build(tmp_path)
+    reads: list[str] = []
+    original = index._read
+
+    def counting_read(rel: str) -> str:
+        reads.append(rel)
+        return original(rel)
+
+    monkeypatch.setattr(index, "_read", counting_read)
+    hits = index.search("needle", max_hits=3)
+    assert len(hits) == 3
+    assert len(reads) == 3
+
+
+def test_test_map_handles_many_files_and_has_no_duplicates(tmp_path: Path, fake_paths: Any) -> None:
+    _ = fake_paths
+    for i in range(300):
+        _write(tmp_path, f"src/pkg/mod{i}.py", "x = 1\n")
+        _write(tmp_path, f"tests/pkg/test_mod{i}.py", "def test_x(): pass\n")
+    index = RepoIndex()
+    index.build(tmp_path)
+    assert index.tests_for(["src/pkg/mod7.py"]) == ["tests/pkg/test_mod7.py"]
+    assert index.tests_for(["tests/pkg/test_mod7.py"]) == ["src/pkg/mod7.py"]
