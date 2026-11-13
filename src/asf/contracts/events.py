@@ -17,6 +17,10 @@
 #   - called by tests/cli/views/test_trace_view.py: EventEnvelope
 #   - called by tests/cli/commands/test_events.py: EventEnvelope
 #   - called by tests/cli/commands/test_trace.py: EventEnvelope
+#   - called by src/asf/web/projection.py: EventEnvelope, Visibility
+#   - called by tests/web/test_narrative.py: EventEnvelope
+#   - called by tests/web/test_projection.py: EventEnvelope
+#   - called by tests/web/test_server.py: EventEnvelope
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
