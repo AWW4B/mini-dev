@@ -21,6 +21,7 @@
 #   - called by tests/cli/commands/test_report.py: BlobStore
 #   - called by tests/web/test_projection.py: BlobStore
 #   - called by tests/web/test_server.py: BlobStore
+#   - called by tests/m3_orchestration/test_e2e.py: BlobStore
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

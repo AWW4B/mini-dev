@@ -52,7 +52,7 @@ def _capsules(node: TaskNode, registry: ContractRegistry | None) -> list[Contrac
 
 def certify_leaf(
     node: TaskNode,
-    base_commit: str,
+    base_commit: str | Callable[[], str],
     parent_branch: str,
     *,
     registry: ContractRegistry | None = None,
@@ -61,6 +61,8 @@ def certify_leaf(
     read_only_files: list[str] | None = None,
 ) -> LeafTaskSpec:
     """Pin capsules (A-1), attach acceptance tests written by the planner tier (A-4) and build the IF-09 LeafTaskSpec.
+
+    ``base_commit`` may be a callable: it is evaluated after authoring, because the new tests are committed first.
 
     Acceptance refs that already are test files are used as they are; otherwise ``authoring(node)`` must write them (it is
     the planner-tier T3 author, see planning/test_authoring.py). A leaf never goes out without tests.
@@ -74,6 +76,7 @@ def certify_leaf(
         tests = authoring(node)
         if not tests:
             raise ValueError(f"Task {node.id}: acceptance test authoring produced no tests")
+    commit = base_commit() if callable(base_commit) else base_commit  # resolved after the tests exist, so the leaf's worktree contains them
     return LeafTaskSpec.model_validate(
         {
             "task_id": str(node.id),
@@ -84,7 +87,7 @@ def certify_leaf(
             "read_only_files": list(read_only_files or []),
             "context_budget_tokens": context_budget_tokens,
             "model_role": "T2",
-            "base_commit": base_commit,
+            "base_commit": commit,
             "parent_branch": parent_branch,
         }
     )

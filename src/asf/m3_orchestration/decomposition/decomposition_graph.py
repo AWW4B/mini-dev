@@ -96,7 +96,7 @@ class _Engine:
         self.broker = _dep("decision_broker")
         self.authoring = _dep("authoring")
         self.control = _dep("control")  # callable -> None | "pause" | "abort", checked every iteration
-        self.base_commit: str = _dep("base_commit", "HEAD")
+        self.base_commit: Any = _dep("base_commit", "HEAD")  # a sha, or a callable returning the current one
         self.parent_branch: str = _dep("parent_branch", "main")
         self.project_root: Path | None = Path(_dep("project_root")) if _dep("project_root") else None
         self.lazy: bool = bool(_dep("lazy", False))

@@ -12,6 +12,7 @@
 #   - imports from src/asf/contracts/errors.py: ApprovalRequired, BudgetExceeded, InvalidModelOutput, ProviderUnavailable (T3 unavailable and invalid output)
 #   - called by src/asf/m3_orchestration/decomposition/leaf_certifier.py: author_acceptance_tests
 #   - called by tests/m3_orchestration/planning/test_test_authoring.py: author_acceptance_tests
+#   - called by src/asf/m3_orchestration/run_graph.py: author_acceptance_tests
 #   - emits/consumes: raises DecisionRequest kind APPROVE_LOCAL_TESTS when the per-run switch is on and T3 is unavailable
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

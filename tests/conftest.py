@@ -6,6 +6,7 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/config/paths.py: AppPaths (isolated directories)
 #   - imports from src/asf/m5_shared/state_store/store.py: StateStore (the cli_project fixture opens a real store)
+#   - imports from tests/m3_orchestration/test_e2e.py: fake_paths (isolated app directories)
 #   - called by tests/m5_shared/state_store/test_schema.py: fake_paths
 #   - called by tests/m5_shared/state_store/test_store.py: fake_paths
 #   - called by tests/m5_shared/state_store/test_recovery.py: fake_paths
