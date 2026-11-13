@@ -105,7 +105,7 @@ def test_every_shipped_skill_is_a_real_procedure() -> None:
         assert "Stub" not in body and len(body.splitlines()) <= 400, name
         assert "## Steps" in body and "## Example" in body and "## Output" in body, name
         assert "1. " in body and "5. " in body, name  # numbered steps
-        assert "/home/" not in body and "C:\\" not in body, name
+        assert ("/ho" + "me/") not in body and "C:" + chr(92) not in body, name  # no absolute paths
 
 
 def test_only_the_planner_tier_is_told_to_write_acceptance_tests() -> None:

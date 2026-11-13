@@ -34,8 +34,10 @@
 #   - imports from src/asf/m5_shared/workspace/workspace.py: Workspace (git worktrees)
 #   - imports from src/asf/m5_shared/events/event_log.py: EventLog (the log the relay feeds)
 #   - imports from src/asf/m5_shared/state_store/outbox.py: OutboxRelay (committed events reach the event log)
+#   - imports from src/asf/m3_orchestration/planning/test_authoring.py: author_acceptance_tests (acceptance tests written by the planner tier)
 #   - called by src/asf/cli/commands/run.py: start_run, resume_run
 #   - called by tests/m3_orchestration/test_run_graph.py: build_run_graph, start_run, resume_run
+#   - called by tests/m3_orchestration/test_e2e.py: start_run
 #   - emits/consumes: emits RUN_STARTED, RUN_COMPLETED, emits narrative events TASK_RECEIVED, STEP_STARTED, HANDOFF_SENT, HANDOFF_RECEIVED (with causation_id set to the triggering event) via StateStore.commit
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -421,7 +423,7 @@ def default_components(project_root: Path, run_id: str, overrides: dict[str, Any
     components["control"] = overrides.get("control") or control
     components["relay"] = overrides.get("relay") or OutboxRelay(store, EventLog(store.conn, components["blobs"]))
     components["supervisor"] = supervisor
-    for name in ("gateway", "registry", "scheduler", "runtime", "driver", "regression", "acceptance", "authoring", "budget", "sleep", "max_ticks", "base_commit", "parent_branch", "lazy", "planner_strategy"):
+    for name in ("gateway", "registry", "scheduler", "runtime", "driver", "regression", "acceptance", "authoring", "budget", "sleep", "max_ticks", "base_commit", "parent_branch", "lazy", "planner_strategy", "allow_local_tests"):
         if name in overrides:
             components[name] = overrides[name]
     if "scheduler" not in components and (project_root / ".git").exists():
@@ -457,6 +459,34 @@ def _build_execution(components: dict[str, Any], project_root: Path, run_id: str
     outcomes: list[Any] = components.setdefault("outcomes", [])
     scheduler_box: dict[str, TaskScheduler] = {}
 
+    def git(*args: str) -> str:
+        code, out, _ = workspace._run_git(list(args))
+        return out if code == 0 else ""
+
+    def head() -> str:
+        return git("rev-parse", "HEAD") or "HEAD"
+
+    def commit_tests(paths: list[str], task_id: str) -> None:
+        """The leaf's worktree is created from the base commit, so the acceptance tests must be in it."""
+        workspace._run_git(["add", "--", *paths])
+        workspace._run_git(["-c", "user.name=ASF", "-c", "user.email=asf@factory.local", "commit", "-m", f"acceptance tests for {task_id}", "--", *paths])
+
+    def authoring(node: Any) -> list[str]:
+        from asf.m3_orchestration.planning.test_authoring import author_acceptance_tests
+
+        paths = author_acceptance_tests(
+            node, bool(overrides.get("allow_local_tests")), gateway=gateway, project_root=project_root, broker=components["decision_broker"]
+        )
+        commit_tests(paths, str(node.id))
+        return paths
+
+    components.setdefault("authoring", authoring)
+    components.setdefault("base_commit", head)
+    components.setdefault("parent_branch", git("rev-parse", "--abbrev-ref", "HEAD") or "main")
+    gate_runner = overrides.get("gate_runner")
+    if overrides.get("test_runner") is not None:
+        components["test_runner"] = overrides["test_runner"]
+
     def attempt(spec: Any, lease: Any, attempt_no: int) -> Any:
         # Runs on a scheduler thread: nothing here may touch the SQLite state store (its connection is thread-bound),
         # so contracts are promoted by the driver on the main thread rather than inside the gate.
@@ -466,6 +496,7 @@ def _build_execution(components: dict[str, Any], project_root: Path, run_id: str
         )
         return verify_change_set(
             change, workspace=workspace, gateway=gateway, allowed_files=list(spec.allowed_files), acceptance_refs=list(spec.acceptance_test_refs),
+            runner=gate_runner,
         )
 
     scheduler = TaskScheduler(runtime=runtime, store=store, attempt_runner=attempt, outcome_sink=outcomes.append)
@@ -482,7 +513,7 @@ def _make_integrate(c: dict[str, Any]) -> Callable[[StateStore], None]:
         parents = [str(r["task_id"]) for r in store.conn.execute("SELECT task_id FROM tasks WHERE state = 'DECOMPOSED' ORDER BY rowid DESC")]
         for parent_id in parents:  # deepest first: children are created after their parents
             integrate_parent(
-                parent_id, state_store=store, workspace=c["workspace"], test_runner=run_in_sandbox, registry=c.get("registry"),
+                parent_id, state_store=store, workspace=c["workspace"], test_runner=c.get("test_runner") or run_in_sandbox, registry=c.get("registry"),
                 scheduler=c["scheduler"], outcome_sink=c["outcomes"].append,
             )
 
@@ -509,6 +540,13 @@ def _scheduler_driver(c: dict[str, Any]) -> Driver:
                 scheduler.mark_verified(task_id)
         while outcomes:
             outcome = outcomes.pop(0)
+            row = store.conn.execute("SELECT version FROM tasks WHERE task_id = ?", (str(outcome.task_id),)).fetchone()
+            if row is not None:  # the scheduler's ESCALATED is recorded on the task row, so a re-split can leave that state
+                store.commit(
+                    StateCommit.model_validate(
+                        {"entity": "task", "entity_id": str(outcome.task_id), "expected_version": int(row["version"]), "mutation": {"state": "ESCALATED"}}
+                    )
+                )
             action = handle_escalation(outcome, store=store, broker=c["decision_broker"], replans_done=counts["replans"], resplits_done=counts["resplits"])
             if action in ("resplit", "replan"):
                 counts["resplits" if action == "resplit" else "replans"] += 1

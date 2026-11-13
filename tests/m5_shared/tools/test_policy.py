@@ -21,6 +21,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -89,7 +90,7 @@ def test_policy_engine_meets_contract(tmp_path: Path) -> None:
     assert res_escape.verdict == Verdict.DENY
     assert "escape" in res_escape.reason.lower() or "denied" in res_escape.reason.lower()
 
-    # 3. Path outside allowed_files
+    # 3. A path outside allowed_files but inside the worktree may be read (header rule 8); only changes are limited to allowed_files
     inv_not_allowed = SimpleNamespace(
         tool="read_file",
         args={"path": "other.py"},
@@ -97,8 +98,8 @@ def test_policy_engine_meets_contract(tmp_path: Path) -> None:
         workspace_dir=ws_dir,
     )
     res_not_allowed = engine.check(inv_not_allowed, read_spec, "A", ["main.py"])  # type: ignore[arg-type]
-    assert res_not_allowed.verdict == Verdict.DENY
-    assert "allowed_files" in res_not_allowed.reason.lower()
+    assert res_not_allowed.verdict == Verdict.ALLOW
+    assert "policy checks passed" in res_not_allowed.reason.lower()
 
     # 4. Destructive tool needs approval
     write_spec = SimpleNamespace(
@@ -168,9 +169,42 @@ def test_a_broken_policy_file_stops_the_engine_instead_of_becoming_an_empty_poli
 def test_the_rel_path_argument_is_checked_against_the_allowed_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FACTORY_HOME", str(tmp_path / "home"))
     engine = PolicyEngine()
-    spec = SimpleNamespace(name="write_file", roles=["worker"], needs_network=False, destructive=False, source="builtin")
+    spec = SimpleNamespace(name="write_file", roles=["worker"], needs_network=False, destructive=True, source="builtin")
     inv = SimpleNamespace(tool="write_file", role="worker", args={"rel_path": "secret.py", "content": "x"}, workspace_dir=str(tmp_path))
     verdict = engine.check(inv, spec, "A", ["src/ok.py"])  # type: ignore[arg-type]
     assert verdict.verdict is Verdict.DENY
     allowed = engine.check(SimpleNamespace(**{**vars(inv), "args": {"rel_path": "src/ok.py", "content": "x"}}), spec, "A", ["src/ok.py"])  # type: ignore[arg-type]
     assert allowed.verdict is Verdict.ALLOW
+
+
+def _check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str, args: dict[str, Any], allowed: list[str], destructive: bool) -> PolicyVerdict:
+    monkeypatch.setenv("FACTORY_HOME", str(tmp_path / "home"))
+    spec = SimpleNamespace(name=tool, roles=["worker"], needs_network=False, destructive=destructive, source="builtin")
+    inv = SimpleNamespace(tool=tool, role="worker", args=args, workspace_dir=str(tmp_path))
+    return PolicyEngine().check(inv, spec, "A", allowed)  # type: ignore[arg-type]
+
+
+def test_file_content_with_slashes_is_not_mistaken_for_a_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    content = "# see http://example.com/a/b\nratio = 10 / 4\n"
+    verdict = _check(tmp_path, monkeypatch, "write_file", {"rel_path": "src/a.py", "content": content}, ["src/a.py"], True)
+    assert verdict.verdict is Verdict.ALLOW
+
+
+def test_writing_inside_the_task_files_is_allowed_and_outside_them_denied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _check(tmp_path, monkeypatch, "write_file", {"rel_path": "src/a.py", "content": "x"}, ["src/a.py"], True).verdict is Verdict.ALLOW
+    assert _check(tmp_path, monkeypatch, "write_file", {"rel_path": "src/b.py", "content": "x"}, ["src/a.py"], True).verdict is Verdict.DENY
+
+
+def test_reading_is_limited_to_the_workspace_not_to_the_task_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _check(tmp_path, monkeypatch, "read_file", {"rel_path": "tests/test_a.py"}, ["src/a.py"], False).verdict is Verdict.ALLOW
+    assert _check(tmp_path, monkeypatch, "read_file", {"rel_path": "../outside.txt"}, ["src/a.py"], False).verdict is Verdict.DENY
+
+
+def test_path_lists_are_checked_and_test_ids_are_reduced_to_their_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _check(tmp_path, monkeypatch, "run_tests", {"selectors": ["tests/test_a.py::test_one"]}, ["src/a.py"], False).verdict is Verdict.ALLOW
+    assert _check(tmp_path, monkeypatch, "run_linter", {"files": ["src/a.py", "../escape.py"]}, ["src/a.py"], False).verdict is Verdict.DENY
+
+
+def test_a_destructive_tool_without_a_path_scope_needs_approval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _check(tmp_path, monkeypatch, "delete_everything", {}, ["src/a.py"], True).verdict is Verdict.NEEDS_APPROVAL
+    assert _check(tmp_path, monkeypatch, "write_file", {"rel_path": "src/a.py", "content": "x"}, [], True).verdict is Verdict.NEEDS_APPROVAL

@@ -96,7 +96,7 @@ class _Engine:
         self.broker = _dep("decision_broker")
         self.authoring = _dep("authoring")
         self.control = _dep("control")  # callable -> None | "pause" | "abort", checked every iteration
-        self.base_commit: str = _dep("base_commit", "HEAD")
+        self.base_commit: Any = _dep("base_commit", "HEAD")  # a sha, or a callable returning the current one
         self.parent_branch: str = _dep("parent_branch", "main")
         self.project_root: Path | None = Path(_dep("project_root")) if _dep("project_root") else None
         self.lazy: bool = bool(_dep("lazy", False))
@@ -174,10 +174,16 @@ def _step(engine: _Engine, node: TaskNode, resplit_evidence: str | None) -> tupl
 
     # split: propose -> validate -> retry with the problems, bounded by the node's split attempts
     while True:
-        proposal = propose_split(node, gateway=engine.gateway, skills=engine.skills, feedback=feedback, role="T3" if node.counters.split_attempts < MAX_SPLIT_ATTEMPTS else "reviewer")
-        sized = [c.model_copy(update={"size_estimate": estimate_size(c, engine.context_tokens(c))}) for c in proposal.children]
-        proposal = proposal.model_copy(update={"children": sized})
-        problems = validate_split(node, proposal)
+        sized: list[TaskNode] = []
+        try:
+            proposal = propose_split(node, gateway=engine.gateway, skills=engine.skills, feedback=feedback, role="T3" if node.counters.split_attempts < MAX_SPLIT_ATTEMPTS else "reviewer")
+        except AsfError as err:  # the planner kept answering badly, is unreachable or out of budget: that attempt is lost, the node is not
+            logger.warning("split proposal for %s failed: %s", node.id, err)
+            problems = [f"the planner could not produce a split: {err}"]
+        else:
+            sized = [c.model_copy(update={"size_estimate": estimate_size(c, engine.context_tokens(c))}) for c in proposal.children]
+            proposal = proposal.model_copy(update={"children": sized})
+            problems = validate_split(node, proposal)
         if not problems:
             node = transition(node, TaskState.DECOMPOSED, "split committed")
             frontier.update(node)

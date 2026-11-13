@@ -47,6 +47,7 @@
 #   - called by tests/conftest.py: StateStore
 #   - called by src/asf/cli/commands/init.py: StateStore
 #   - called by tests/cli/commands/test_project.py: StateStore
+#   - called by tests/m3_orchestration/test_e2e.py: StateStore
 #   - emits/consumes: writes outbox rows holding EventEnvelope (IF-17) in the same transaction as each mutation
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

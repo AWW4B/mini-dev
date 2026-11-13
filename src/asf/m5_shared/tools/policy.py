@@ -46,6 +46,22 @@ class PolicyVerdict(BaseModel):
     reason: str
 
 
+_PATH_KEYS = frozenset({"path", "rel_path", "file", "filepath", "filename", "dest", "target", "cwd"})
+_PATH_LIST_KEYS = frozenset({"files", "paths", "selectors"})
+
+
+def _path_arguments(args: dict[str, Any]) -> list[str]:
+    """The arguments that name paths: by key only. File contents and free text are never mistaken for paths."""
+    paths: list[str] = []
+    for key, value in args.items():
+        lowered = key.lower()
+        if lowered in _PATH_KEYS and isinstance(value, str):
+            paths.append(value)
+        elif lowered in _PATH_LIST_KEYS and isinstance(value, list):
+            paths.extend(str(item).split("::", 1)[0] for item in value if isinstance(item, str))  # test ids: tests/x.py::name
+    return paths
+
+
 class PolicyEngine:
     policy_config: dict[str, Any]
 
@@ -90,31 +106,27 @@ class PolicyEngine:
 
         # 4. Path argument validation
         ws_path = Path(invocation.workspace_dir)
-        path_keys = {"path", "rel_path", "file", "filepath", "filename", "dest", "target", "cwd"}
-        for k, v in invocation.args.items():
-            if k.lower() in path_keys or (isinstance(v, str) and ("/" in v or "\\" in v)):
-                val_str = str(v)
+        norm_allowed = {Path(f).as_posix() for f in allowed_files}
+        scope_enforced = False
+        for candidate in _path_arguments(invocation.args):
+            try:
+                resolved = get_platform().resolve_within(ws_path, candidate)  # never outside the workspace, never through a link
+            except Exception as err:  # noqa: BLE001 - the platform adapter raises PolicyDenied or OS errors; both mean deny
+                return PolicyVerdict(verdict=Verdict.DENY, reason=f"Path '{candidate}' denied: {err}")
+            if spec.destructive and allowed_files:
+                # Changing a file is limited to the task's own files. Reading is limited to the workspace only: a worker
+                # must be able to read its tests, its read-only files and the code it depends on.
                 try:
-                    resolved = get_platform().resolve_within(ws_path, val_str)
-                    if allowed_files:
-                        try:
-                            rel = resolved.relative_to(ws_path).as_posix()
-                        except ValueError:
-                            rel = val_str
-                        norm_allowed = {Path(f).as_posix() for f in allowed_files}
-                        if rel not in norm_allowed:
-                            return PolicyVerdict(
-                                verdict=Verdict.DENY,
-                                reason=f"Path '{rel}' not in allowed_files scope",
-                            )
-                except Exception as err:
-                    return PolicyVerdict(
-                        verdict=Verdict.DENY,
-                        reason=f"Path '{val_str}' denied: {err}",
-                    )
+                    rel = resolved.relative_to(ws_path).as_posix()
+                except ValueError:
+                    rel = candidate
+                if rel not in norm_allowed:
+                    return PolicyVerdict(verdict=Verdict.DENY, reason=f"Path '{rel}' not in allowed_files scope")
+                scope_enforced = True
 
-        # 5. Destructive check
-        if spec.destructive:
+        # 5. Destructive check: a destructive tool that stayed inside the task's files is the worker's normal job; a destructive
+        # tool with no path scope to check (delete anything, run anything) needs a person's approval.
+        if spec.destructive and not scope_enforced:
             return PolicyVerdict(
                 verdict=Verdict.NEEDS_APPROVAL,
                 reason=f"Tool '{spec.name}' is destructive and needs approval",
