@@ -18,6 +18,8 @@
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m5_shared/gateway/test_providers.py` on Windows and Linux once src/asf/m5_shared/gateway/providers.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m5_shared/gateway/test_providers.py` and `uv run mypy tests/m5_shared/gateway/test_providers.py` are clean.
 
 
+import importlib.util
+
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -73,12 +75,18 @@ def test_build_chat_model_meets_contract(monkeypatch: pytest.MonkeyPatch) -> Non
     groq_model = build_chat_model(RouteConfig(provider="groq", model="llama-3.3-70b-versatile"))
     assert isinstance(groq_model, BaseChatModel)
 
-    # 5. Anthropic route with mock key
-    monkeypatch.setenv("FACTORY_ANTHROPIC_API_KEY", "mock-anthropic-key")  # noqa: S106
-    anthropic_model = build_chat_model(RouteConfig(provider="anthropic", model="claude-3-5-sonnet-20241022"))
-    assert isinstance(anthropic_model, BaseChatModel)
-
-    # 6. Gemini route with mock key
+    # 5. Gemini route with mock key
     monkeypatch.setenv("FACTORY_GOOGLE_API_KEY", "mock-google-key")  # noqa: S106
     gemini_model = build_chat_model(RouteConfig(provider="gemini", model="gemini-1.5-pro"))
     assert isinstance(gemini_model, BaseChatModel)
+
+
+def test_the_anthropic_route_builds_with_the_extra_and_names_the_extra_without_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """langchain-anthropic is an optional extra: CI installs only `web`, so both outcomes are legitimate."""
+    monkeypatch.setenv("FACTORY_ANTHROPIC_API_KEY", "mock-anthropic-key")  # noqa: S106
+    route = RouteConfig(provider="anthropic", model="claude-3-5-sonnet-20241022")
+    if importlib.util.find_spec("langchain_anthropic") is not None:
+        assert isinstance(build_chat_model(route), BaseChatModel)
+    else:
+        with pytest.raises(RuntimeError, match="extra 'anthropic'"):
+            build_chat_model(route)
