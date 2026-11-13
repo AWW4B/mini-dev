@@ -17,6 +17,8 @@
 #   - called by src/asf/m3_orchestration/run_graph.py: EventLog
 #   - called by tests/cli/commands/test_events.py: EventLog
 #   - called by tests/cli/commands/test_trace.py: EventLog
+#   - called by tests/web/test_projection.py: EventLog
+#   - called by tests/web/test_server.py: EventLog
 #   - emits/consumes: stores EventEnvelope (all EventKind values incl. narrative kinds); serves them ordered by seq
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

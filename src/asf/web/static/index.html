@@ -29,11 +29,15 @@ DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for t
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header id="run-header"></header>
-<aside id="participants"></aside>
-<main id="thread"></main>
-<section id="detail" hidden></section>
-<label><input type="checkbox" id="show-internal"> show internal events</label>
+<header id="run-header"><span id="run-title">Factory run</span> <span id="run-status" class="pill"></span> <span id="connection" class="muted"></span></header>
+<aside id="participants" aria-label="Participants"></aside>
+<main id="thread" aria-live="polite"></main>
+<section id="detail" hidden>
+  <button type="button" id="detail-close">Close</button>
+  <h2 id="detail-title"></h2>
+  <pre id="detail-text"></pre>
+</section>
+<footer><label><input type="checkbox" id="show-internal"> show internal events</label> <span class="muted">read-only view; it cannot change the run</span></footer>
 <script src="/static/app.js"></script>
 </body>
 </html>

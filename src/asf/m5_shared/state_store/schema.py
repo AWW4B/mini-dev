@@ -7,6 +7,8 @@
 #   - imports from src/asf/contracts/errors.py: ConfigError (a database from a newer version)
 #   - called by src/asf/m5_shared/state_store/store.py: migrate
 #   - called by tests/m5_shared/state_store/test_schema.py: migrate, SCHEMA_VERSION
+#   - called by tests/web/test_projection.py: migrate
+#   - called by tests/web/test_server.py: migrate
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

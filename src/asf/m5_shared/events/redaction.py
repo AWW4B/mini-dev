@@ -9,6 +9,7 @@
 #   - called by src/asf/logging_setup.py: redact_text
 #   - called by src/asf/web/narrative.py: redact_text
 #   - called by tests/m5_shared/events/test_redaction.py: redact_text, redact_payload
+#   - called by src/asf/web/projection.py: redact_text
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
