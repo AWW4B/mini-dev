@@ -27,6 +27,7 @@
 # DONE WHEN: (1) tests/m5_shared/tools/test_skills.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/tools/skills.py` and `uv run mypy src/asf/m5_shared/tools/skills.py` are clean.
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,7 @@ def _parse_skill_file(skill_path: Path) -> tuple[dict[str, Any], str, int]:
                 else:
                     frontmatter[k] = v.strip("\"'")
 
+    body = re.sub(r"\A\s*<!--.*?-->\s*", "", body, count=1, flags=re.DOTALL)  # developer header, not part of the procedure
     return frontmatter, body, len(body)
 
 
