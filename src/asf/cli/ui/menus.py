@@ -21,8 +21,6 @@
 
 import sys
 
-import questionary
-
 from asf.contracts.errors import ConfigError
 
 
@@ -44,16 +42,22 @@ def _answered(value: object) -> object:
 
 def choose(title: str, options: list[str], default: str | None = None) -> str:
     _require_tty()
+    import questionary  # prompt_toolkit costs about 0.3 s to load; only an interactive prompt needs it
+
     answer = questionary.select(title, choices=options, default=default if default in options else None).ask()
     return str(_answered(answer))
 
 
 def ask_text(prompt: str, default: str | None = None, multiline: bool = False) -> str:
     _require_tty()
+    import questionary
+
     answer = questionary.text(prompt, default=default or "", multiline=multiline).ask()
     return str(_answered(answer))
 
 
 def confirm(prompt: str, default: bool = False) -> bool:
     _require_tty()
+    import questionary
+
     return bool(_answered(questionary.confirm(prompt, default=default).ask()))

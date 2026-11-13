@@ -39,7 +39,7 @@
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 
@@ -61,13 +61,33 @@ from asf.config.paths import get_paths
 from asf.contracts.budget import RunBudget
 from asf.contracts.control import RunCommand
 from asf.contracts.errors import ConfigError
-from asf.contracts.requests import TaskType
-from asf.m2_request.intake_router import submit
-from asf.m3_orchestration.run_graph import resume_run, start_run
-from asf.m5_shared.gateway.gateway import ModelGateway
+from asf.contracts.requests import StructuredRequest, TaskType
 from asf.platform.select import get_platform
 
+if TYPE_CHECKING:
+    from asf.m5_shared.gateway.gateway import ModelGateway
+
 _WAITING = ("AWAITING_DECISION", "PAUSED")
+
+
+def submit(request: Any, **kwargs: Any) -> StructuredRequest:
+    """The intake pipeline pulls in langgraph, so it is loaded when a request is submitted, not when any command is typed."""
+    from asf.m2_request.intake_router import submit as _submit
+
+    return _submit(request, **kwargs)
+
+
+def start_run(request: StructuredRequest, root: Path, overrides: dict[str, Any]) -> str:
+    """The run graph (langgraph, langchain) is loaded when a run starts, not when any command is typed."""
+    from asf.m3_orchestration.run_graph import start_run as _start_run
+
+    return _start_run(request, root, overrides)
+
+
+def resume_run(run_id: str, root: Path, overrides: dict[str, Any] | None = None) -> None:
+    from asf.m3_orchestration.run_graph import resume_run as _resume_run
+
+    _resume_run(run_id, root, overrides)
 
 
 def _pairs(values: list[str], flag: str) -> dict[str, str]:
@@ -87,7 +107,9 @@ def _budget(run_id: str) -> RunBudget:
     )
 
 
-def _gateway(profile: str, models: dict[str, str], strategies: dict[str, str]) -> ModelGateway:
+def _gateway(profile: str, models: dict[str, str], strategies: dict[str, str]) -> "ModelGateway":
+    from asf.m5_shared.gateway.gateway import ModelGateway
+
     gateway = ModelGateway(profile, _budget("pending"))
     for role, name in models.items():
         gateway.roles.setdefault(role, {})["model"] = name

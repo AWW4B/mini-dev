@@ -35,7 +35,6 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from markitdown import MarkItDown
 from pydantic import BaseModel
 
 from asf.contracts.decisions import DecisionRequest
@@ -50,7 +49,7 @@ QUALITY_ACCEPT = 0.9
 MAX_ALTERNATE_EXTRACTORS = 2
 _MAGIC_PROBE_BYTES = 1024
 
-_markitdown: MarkItDown | None = None
+_markitdown: Any = None
 
 
 class IngestedDocument(BaseModel):
@@ -142,9 +141,11 @@ def _compute_quality(text: str) -> float:
     return round(min(1.0, max(0.0, ratio)), 2)
 
 
-def _get_markitdown() -> MarkItDown:
+def _get_markitdown() -> Any:
     global _markitdown
     if _markitdown is None:
+        from markitdown import MarkItDown  # the converter costs about a second to import and only document ingestion needs it
+
         _markitdown = MarkItDown()
     return _markitdown
 

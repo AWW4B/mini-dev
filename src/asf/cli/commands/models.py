@@ -29,7 +29,7 @@
 # DONE WHEN: (1) tests/cli/commands/test_models.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/cli/commands/models.py` and `uv run mypy src/asf/cli/commands/models.py` are clean.
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 
@@ -37,15 +37,19 @@ from asf.cli.context import EXIT_OK, EXIT_USER, guard, project_root, renderer_fo
 from asf.config.loader import load_layered, write_user_toml
 from asf.config.settings import load_settings
 from asf.contracts.budget import RunBudget
-from asf.m5_shared.gateway.gateway import ModelGateway
 from asf.m5_shared.runtime.backends import ExternalBackend, LlamaServerBackend, OllamaBackend
 from asf.m5_shared.runtime.calibration import calibrate
+
+if TYPE_CHECKING:
+    from asf.m5_shared.gateway.gateway import ModelGateway
 
 CALIBRATION_CONTEXTS = [2048, 4096, 8192, 16384]
 _PING = "Reply with the single word OK."
 
 
-def _gateway() -> ModelGateway:
+def _gateway() -> "ModelGateway":
+    from asf.m5_shared.gateway.gateway import ModelGateway
+
     profile = load_settings(project_root()).profile
     budget = RunBudget.model_validate(
         {"run_id": "models", "max_remote_tokens": 10_000, "max_local_tokens": 10_000, "max_api_spend": 1.0, "max_wall_clock_s": 600, "max_task_nodes": 1}

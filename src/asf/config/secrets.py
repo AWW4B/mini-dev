@@ -29,11 +29,16 @@ import stat
 import sys
 from pathlib import Path
 
-import keyring
-
 from asf.config.paths import get_paths
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _keyring_get(provider: str) -> str | None:
+    """The stored key, if any. ``keyring`` is imported here because loading it costs half a second and many commands never need a key."""
+    import keyring
+
+    return keyring.get_password(_KEYRING_SERVICE, provider)
 
 # Well-known providers that doctor checks by default
 _KNOWN_PROVIDERS = ("openai", "anthropic", "google")
@@ -79,7 +84,7 @@ def get_api_key(provider: str) -> str | None:
     """
     # 1. keyring
     try:
-        kr_val = keyring.get_password(_KEYRING_SERVICE, provider)
+        kr_val = _keyring_get(provider)
         if kr_val:
             return kr_val
     except Exception as _kr_err:  # noqa: BLE001
@@ -112,7 +117,7 @@ def key_sources() -> dict[str, str]:
 
         # keyring
         try:
-            kr_val = keyring.get_password(_KEYRING_SERVICE, provider)
+            kr_val = _keyring_get(provider)
             if kr_val:
                 result[provider] = "keyring"
                 continue
