@@ -37,6 +37,7 @@
 #   - imports from src/asf/m3_orchestration/planning/test_authoring.py: author_acceptance_tests (acceptance tests written by the planner tier)
 #   - called by src/asf/cli/commands/run.py: start_run, resume_run
 #   - called by tests/m3_orchestration/test_run_graph.py: build_run_graph, start_run, resume_run
+#   - called by tests/m3_orchestration/test_e2e.py: start_run
 #   - emits/consumes: emits RUN_STARTED, RUN_COMPLETED, emits narrative events TASK_RECEIVED, STEP_STARTED, HANDOFF_SENT, HANDOFF_RECEIVED (with causation_id set to the triggering event) via StateStore.commit
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -539,6 +540,13 @@ def _scheduler_driver(c: dict[str, Any]) -> Driver:
                 scheduler.mark_verified(task_id)
         while outcomes:
             outcome = outcomes.pop(0)
+            row = store.conn.execute("SELECT version FROM tasks WHERE task_id = ?", (str(outcome.task_id),)).fetchone()
+            if row is not None:  # the scheduler's ESCALATED is recorded on the task row, so a re-split can leave that state
+                store.commit(
+                    StateCommit.model_validate(
+                        {"entity": "task", "entity_id": str(outcome.task_id), "expected_version": int(row["version"]), "mutation": {"state": "ESCALATED"}}
+                    )
+                )
             action = handle_escalation(outcome, store=store, broker=c["decision_broker"], replans_done=counts["replans"], resplits_done=counts["resplits"])
             if action in ("resplit", "replan"):
                 counts["resplits" if action == "resplit" else "replans"] += 1

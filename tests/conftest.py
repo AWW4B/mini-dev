@@ -6,7 +6,6 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/config/paths.py: AppPaths (isolated directories)
 #   - imports from src/asf/m5_shared/state_store/store.py: StateStore (the cli_project fixture opens a real store)
-#   - imports from tests/m3_orchestration/test_e2e.py: fake_paths (isolated app directories)
 #   - called by tests/m5_shared/state_store/test_schema.py: fake_paths
 #   - called by tests/m5_shared/state_store/test_store.py: fake_paths
 #   - called by tests/m5_shared/state_store/test_recovery.py: fake_paths
@@ -61,6 +60,7 @@
 #   - called by tests/cli/commands/test_trace.py: cli_project
 #   - called by tests/cli/commands/test_dash.py: cli_project
 #   - called by tests/cli/test_flows.py: cli_project
+#   - called by tests/m3_orchestration/test_e2e.py: fake_paths
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

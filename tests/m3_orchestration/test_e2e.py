@@ -4,7 +4,6 @@
 # OWNS: The whole-pipeline test with a scripted model
 # DOES NOT OWN: Unit behaviour (each module has its own tests)
 # CONNECTS TO (external boundaries only):
-#   - called by tests/conftest.py: fake_paths
 #   - imports from src/asf/m3_orchestration/run_graph.py: start_run (unit under test)
 #   - imports from tests/conftest.py: fake_paths (shared fixtures)
 #   - imports from src/asf/contracts/requests.py: StructuredRequest (request fixture)
