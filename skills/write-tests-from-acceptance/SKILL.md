@@ -1,7 +1,7 @@
 ---
 name: write-tests-from-acceptance
 description: Write pytest acceptance tests for a leaf from its acceptance criteria and pinned capsules. Planner tier only.
-version: 0.0.1
+version: 1.0.0
 allowed-tools: [read_file, search_code]
 ---
 <!--
@@ -29,4 +29,39 @@ DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for t
 
 # write-tests-from-acceptance
 
-Stub. Write the procedure here: inputs, numbered steps, output format, one example.
+Write pytest acceptance tests for one leaf task. Only the planning tier writes these: the tests are the definition of done that the coding model is judged by, so a weak model must never author them.
+
+## Inputs
+- GOAL and ACCEPTANCE CRITERIA of the leaf.
+- CONTRACTS: the pinned signatures of the interfaces the leaf implements or uses (never their implementations).
+- FILES UNDER TEST: the module paths the leaf will create or change.
+
+## Steps
+1. Turn each acceptance criterion into at least one test. A criterion with several outcomes ("rejects empty input and oversized input") becomes several tests.
+2. Test through the public interface named in the contract. Import the module the way a user of it would; never reach into private names.
+3. Name each test after the behaviour: `test_refund_returns_a_receipt`, not `test_1`.
+4. Cover the error cases the contract lists (`raises LedgerError` means a `pytest.raises` test) and the edges of every input (empty, one item, the limit, one past the limit).
+5. Keep tests deterministic: no network, no sleeping, no wall-clock dependence, no random values without a fixed seed. Use `tmp_path` for files.
+6. Do not mock the module under test. Fake only things outside it (a clock, a remote service) and only through the parameters the contract gives you.
+7. Put every file under `tests/`, named `test_<module>.py`, mirroring the source path. One file per module.
+8. Read the tests once as the coding model: could a wrong implementation pass them? If yes, add the missing assertion.
+
+## Output
+One JSON object and nothing else: `{"files": {"tests/billing/test_refund.py": "<complete file content>"}}`.
+
+## Example
+Criterion: "refund returns a receipt and refuses amounts above the charge".
+```python
+import pytest
+from billing.refund import RefundError, refund
+
+
+def test_refund_returns_a_receipt():
+    receipt = refund(charge_id="c1", amount=5)
+    assert receipt.amount == 5 and receipt.charge_id == "c1"
+
+
+def test_refund_refuses_more_than_the_charge():
+    with pytest.raises(RefundError):
+        refund(charge_id="c1", amount=10_000)
+```

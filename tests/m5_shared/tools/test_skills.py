@@ -82,3 +82,33 @@ def test_skills_registry_meets_contract(tmp_path: Path) -> None:
     builtin_manifests = default_reg.lookup("structuring", role="T3")
     assert len(builtin_manifests) >= 1
     assert any(bm.name == "request-structuring" for bm in builtin_manifests)
+
+
+def test_the_developer_header_comment_is_not_part_of_the_loaded_procedure(tmp_path: Path) -> None:
+    skill = tmp_path / "demo" / "SKILL.md"
+    skill.parent.mkdir()
+    skill.write_text("---\nname: demo\ndescription: d\nversion: 1\n---\n<!--\nFILE: skills/demo/SKILL.md\nROLE: internal\n-->\n\n# demo\n\n1. Do it.\n", encoding="utf-8")
+    registry = SkillsRegistry(tmp_path)
+    body = registry.load_body("demo")
+    assert body.startswith("# demo") and "FILE:" not in body and "<!--" not in body
+    assert registry.lookup("demo", "T3")[0].body_chars == len(body)
+
+
+def test_every_shipped_skill_is_a_real_procedure() -> None:
+    skills_dir = Path(__file__).resolve().parents[3] / "skills"
+    registry = SkillsRegistry(skills_dir)
+    names = {m.name for m in registry.lookup("", "*")}
+    assert names == {"request-structuring", "split-proposal", "write-tests-from-acceptance", "python-module-from-contract", "reproduce-bug-as-failing-test", "characterisation-tests"}
+    assert registry.validate_all() == []
+    for name in names:
+        body = registry.load_body(name)
+        assert "Stub" not in body and len(body.splitlines()) <= 400, name
+        assert "## Steps" in body and "## Example" in body and "## Output" in body, name
+        assert "1. " in body and "5. " in body, name  # numbered steps
+        assert "/home/" not in body and "C:\\" not in body, name
+
+
+def test_only_the_planner_tier_is_told_to_write_acceptance_tests() -> None:
+    skills_dir = Path(__file__).resolve().parents[3] / "skills"
+    body = SkillsRegistry(skills_dir).load_body("write-tests-from-acceptance")
+    assert "planning tier" in body and "weak model must never author" in body

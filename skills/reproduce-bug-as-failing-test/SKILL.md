@@ -1,7 +1,7 @@
 ---
 name: reproduce-bug-as-failing-test
 description: Reproduce a reported bug as a minimal failing pytest test before any fix.
-version: 0.0.1
+version: 1.0.0
 allowed-tools: [read_file, search_code]
 ---
 <!--
@@ -29,4 +29,32 @@ DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for t
 
 # reproduce-bug-as-failing-test
 
-Stub. Write the procedure here: inputs, numbered steps, output format, one example.
+Before anyone fixes a bug, reproduce it as the smallest pytest test that fails for the reported reason. The test then becomes the proof that the fix works.
+
+## Inputs
+- BUG REPORT: what happened, what was expected, any error text or stack trace.
+- REPOSITORY CONTEXT: the modules and tests that are probably involved.
+
+## Steps
+1. Restate the bug in one sentence of the form "when X, the code does Y but should do Z".
+2. Find the public function or command that a user would call to trigger X. Reproduce through that entry point, not through internals.
+3. Build the smallest input that triggers it. Remove everything that is not needed: if the bug still happens without a step, delete the step.
+4. Write one test, named `test_regression_<short_description>`, that asserts the correct behaviour Z (not the buggy one).
+5. Run it on the current code. It must fail, and the failure must be the reported one. A test that fails for another reason (an import error, a typo) is not a reproduction: fix the test.
+6. If you cannot make it fail, say so and list what you tried; do not claim a reproduction you did not see.
+7. Do not fix the bug in this step and do not change existing tests.
+8. Note where the failure points (file and function): that is the first hypothesis for the fix.
+
+## Output
+The test file path and content, the exact failing assertion or error, and the suspected location in one line.
+
+## Example
+Report: "`parse_price('1,5')` returns 15 instead of 1.5".
+```python
+from shop.pricing import parse_price
+
+
+def test_regression_comma_is_a_decimal_separator():
+    assert parse_price("1,5") == 1.5
+```
+Failure seen: `assert 15 == 1.5`. Suspect: `shop/pricing.py::parse_price` strips the comma.

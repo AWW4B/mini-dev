@@ -1,7 +1,7 @@
 ---
 name: python-module-from-contract
 description: Implement one Python module so that its pinned contract capsules and acceptance tests pass.
-version: 0.0.1
+version: 1.0.0
 allowed-tools: [read_file, search_code]
 ---
 <!--
@@ -29,4 +29,30 @@ DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for t
 
 # python-module-from-contract
 
-Stub. Write the procedure here: inputs, numbered steps, output format, one example.
+Implement one Python module so that its pinned contract and its acceptance tests pass, changing nothing else.
+
+## Inputs
+- TASK: what to deliver, the files you may change (ALLOWED FILES), files you may only read.
+- DEPENDENCY CONTRACTS: signatures, error cases and an example for each interface you use. Trust them; do not look for the implementation.
+- ACCEPTANCE TESTS: the tests you must make pass. You may read them; you must not change them.
+
+## Steps
+1. Read the acceptance tests first. They say exactly what "done" means.
+2. Read the files you were given and the contract lines. Note every signature you must keep exactly as written.
+3. Implement the smallest code that satisfies the tests and the contract. Keep the declared names, parameters, return types and error types. Do not add features nobody asked for.
+4. Write only inside ALLOWED FILES. A write anywhere else is denied by the platform; do not try to work around it.
+5. Use the standard library and the dependencies already in the project. Never add or upgrade a dependency.
+6. Use `pathlib.Path` for paths and argument lists for processes; never build shell strings. Open text files with `encoding="utf-8"`.
+7. Run the acceptance tests with `run_tests` and the linter with `run_linter` on the files you changed. Read the failures, fix the code, run again.
+8. Stop when the tests pass and the linter is clean, and report what you changed in one short paragraph. If you are stuck on something outside your files (the contract is missing an operation you need, or the context is too small), report `blocked` with the reason and the word CONTRACT_GAP or CONTEXT_OVERFLOW instead of guessing.
+
+## Output
+One JSON object per step: a tool call `{"action": "tool", "tool": "<name>", "args": {...}}`, or the end `{"action": "done", "message": "..."}` / `{"action": "blocked", "message": "..."}`.
+
+## Example
+```
+{"action": "tool", "tool": "read_file", "args": {"rel_path": "tests/billing/test_refund.py"}}
+{"action": "tool", "tool": "write_file", "args": {"rel_path": "src/billing/refund.py", "content": "..."}}
+{"action": "tool", "tool": "run_tests", "args": {"selectors": ["tests/billing/test_refund.py"]}}
+{"action": "done", "message": "Implemented refund(); both tests pass and ruff is clean."}
+```
