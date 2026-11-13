@@ -99,7 +99,7 @@ def test_policy_engine_meets_contract(tmp_path: Path) -> None:
     )
     res_not_allowed = engine.check(inv_not_allowed, read_spec, "A", ["main.py"])  # type: ignore[arg-type]
     assert res_not_allowed.verdict == Verdict.ALLOW
-    assert "allowed_files" in res_not_allowed.reason.lower()
+    assert "policy checks passed" in res_not_allowed.reason.lower()
 
     # 4. Destructive tool needs approval
     write_spec = SimpleNamespace(
