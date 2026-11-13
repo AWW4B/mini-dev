@@ -19,13 +19,14 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/gateway/test_providers.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/gateway/providers.py` and `uv run mypy src/asf/m5_shared/gateway/providers.py` are clean.
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, SecretStr
 
 from asf.config.secrets import get_api_key
+
+if TYPE_CHECKING:
+    from langchain_core.language_models.chat_models import BaseChatModel
 
 
 class RouteConfig(BaseModel):
@@ -36,7 +37,9 @@ class RouteConfig(BaseModel):
     reasoning_effort: str | None = None
 
 
-def build_chat_model(route: RouteConfig) -> BaseChatModel:
+def build_chat_model(route: RouteConfig) -> "BaseChatModel":
+    from langchain_openai import ChatOpenAI  # imported when a model is built: it costs seconds and most commands never build one
+
     provider = route.provider.lower().strip()
     key = get_api_key(route.provider)
     if provider == "gemini" and not key:

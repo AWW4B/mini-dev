@@ -30,13 +30,25 @@ from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any, cast
 
-from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel
 
 from asf.config.loader import load_layered
 from asf.m5_shared.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def __getattr__(name: str) -> Any:
+    """``MultiServerMCPClient`` is imported on first use: the MCP stack costs seconds of start-up and most commands never touch it."""
+    if name == "MultiServerMCPClient":
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+
+        return MultiServerMCPClient
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def _new_client(connections: dict[str, Any]) -> Any:
+    return __getattr__("MultiServerMCPClient")(cast(Any, connections))
 
 
 class McpServerReport(BaseModel):
@@ -141,7 +153,7 @@ class McpManager:
             )
 
         async def _probe() -> McpServerReport:
-            client = MultiServerMCPClient(cast(Any, {name: conn}))
+            client = _new_client({name: conn})
             info_dict = await client.get_server_info(server_name=name)
             server_info = info_dict.get(name)
             proto_ver: str | None = None
@@ -178,8 +190,8 @@ class McpManager:
                 continue
 
             async def _fetch_tools(c: dict[str, Any], n: str) -> list[Any]:
-                client = MultiServerMCPClient(cast(Any, {n: c}))
-                return await client.get_tools(server_name=n)
+                client = _new_client({n: c})
+                return cast(list[Any], await client.get_tools(server_name=n))
 
             try:
                 tools = cast(list[Any], _run_coro_sync(_fetch_tools(conn, srv_name)))

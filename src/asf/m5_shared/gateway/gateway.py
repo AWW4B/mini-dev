@@ -40,16 +40,16 @@
 # DONE WHEN: (1) tests/m5_shared/gateway/test_gateway.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/gateway/gateway.py` and `uv run mypy src/asf/m5_shared/gateway/gateway.py` are clean.
 
 import logging
-from typing import Any
-
-from langchain_core.runnables import Runnable
+from typing import TYPE_CHECKING, Any
 
 from asf.config.loader import load_layered
 from asf.contracts.budget import RunBudget
 from asf.contracts.errors import BudgetExceeded, ProviderUnavailable
 from asf.contracts.models import ModelRole
 from asf.m5_shared.gateway.providers import RouteConfig, build_chat_model
-from asf.m5_shared.gateway.usage_callback import UsageCallbackHandler
+
+if TYPE_CHECKING:
+    from langchain_core.runnables import Runnable
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ class ModelGateway:
         purpose: str,
         output_schema: type[Any] | None = None,
         task_id: str | None = None,
-    ) -> Runnable[Any, Any]:
+    ) -> "Runnable[Any, Any]":
         role_key = role.value if hasattr(role, "value") else str(role)
 
         if role_key == "T1" and purpose == "acceptance_tests":
@@ -160,6 +160,9 @@ class ModelGateway:
             raise ProviderUnavailable(f"Provider '{provider}' unavailable: {err}") from err
 
         strategy = self.strategies.get("worker", "tool_loop")
+        # loads langchain_core callbacks, so it is imported when a model is built, not when the module is
+        from asf.m5_shared.gateway.usage_callback import UsageCallbackHandler
+
         usage_handler = UsageCallbackHandler(
             run_id=str(self.budget.run_id),
             task_id=task_id,

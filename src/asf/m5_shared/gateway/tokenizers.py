@@ -19,8 +19,6 @@
 
 import logging
 
-import tiktoken
-
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +28,8 @@ def count_tokens(model_id: str, text: str) -> tuple[int, bool]:
         return 0, False
 
     try:
+        import tiktoken  # imported on first count: loading the vocabulary code is not free
+
         enc = tiktoken.encoding_for_model(model_id)
         return len(enc.encode(text)), False
     except Exception:  # noqa: BLE001 - unknown model, or the vocabulary cannot be fetched offline

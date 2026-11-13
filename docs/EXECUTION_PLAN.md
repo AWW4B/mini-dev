@@ -104,22 +104,22 @@ For each site decide, in this order:
 Also remove the `except (NotImplementedError, Exception)` stub guards in `logging_setup.py`, `doctor/checks.py`, `cli/commands/doctor.py` and `cli/app.py` once the code they guard is real (redaction is real now).
 
 **2b. `m2_request/pipeline.py`**
-- [ ] It writes raw SQL `INSERT OR IGNORE INTO outbox` and swallows failures. Its header says events go "via StateStore.commit". Events can be lost silently. Route through `StateStore.commit` as declared; if that is impossible with the current `StateStore` signature, stop and report.
+- [x] It writes raw SQL `INSERT OR IGNORE INTO outbox` and swallows failures. Its header says events go "via StateStore.commit". Events can be lost silently. Route through `StateStore.commit` as declared; if that is impossible with the current `StateStore` signature, stop and report.
 
 **2c. `m2_request/document_ingestion.py`**
-- [ ] Header requires a `DecisionRequest` (kind CLARIFY) for unsupported, oversized or unreadable files. `DecisionBroker` is imported but unused (`noqa: F401`). Implement it.
-- [ ] No size limit: the whole file is read into memory (`read_bytes`) and then read again by MarkItDown. Check `path.stat().st_size` against a limit from settings **before** reading; oversized means CLARIFY.
-- [ ] `PK\x03\x04` matches every ZIP (xlsx, pptx, jar). Look inside the archive for `word/document.xml` (docx), `ppt/` (pptx), `xl/` (xlsx) using `zipfile`.
-- [ ] Header says alternates run on a failed **quality check**; the code only falls back on empty output. Run the alternates when `quality_score` is below a threshold and keep the best-scoring result (at most 2 alternates).
-- [ ] Create `MarkItDown()` once per process (module-level lazy singleton), not per call.
-- [ ] Optional Docling path (header rule 9): use it only if `importlib.util.find_spec("docling")` succeeds. It is the architecture's recommended PDF default and the only path with OCR.
+- [x] Header requires a `DecisionRequest` (kind CLARIFY) for unsupported, oversized or unreadable files. `DecisionBroker` is imported but unused (`noqa: F401`). Implement it.
+- [x] No size limit: the whole file is read into memory (`read_bytes`) and then read again by MarkItDown. Check `path.stat().st_size` against a limit from settings **before** reading; oversized means CLARIFY.
+- [x] `PK\x03\x04` matches every ZIP (xlsx, pptx, jar). Look inside the archive for `word/document.xml` (docx), `ppt/` (pptx), `xl/` (xlsx) using `zipfile`.
+- [x] Header says alternates run on a failed **quality check**; the code only falls back on empty output. Run the alternates when `quality_score` is below a threshold and keep the best-scoring result (at most 2 alternates).
+- [x] Create `MarkItDown()` once per process (module-level lazy singleton), not per call.
+- [x] Optional Docling path (header rule 9): use it only if `importlib.util.find_spec("docling")` succeeds. It is the architecture's recommended PDF default and the only path with OCR.
 
 **2d. `m5_shared/context/repo_index.py`: memory**
-- [ ] It keeps the full text of every `.py/.md/.toml/.json/.txt` file in `self._file_contents` with no size cap. On a large repo this is hundreds of MB. Keep only symbols, sizes and hashes in memory; read file text lazily on demand; skip files larger than a cap (for example 1 MB) and binary-looking files. Keep the public API unchanged.
+- [x] It keeps the full text of every `.py/.md/.toml/.json/.txt` file in `self._file_contents` with no size cap. On a large repo this is hundreds of MB. Keep only symbols, sizes and hashes in memory; read file text lazily on demand; skip files larger than a cap (for example 1 MB) and binary-looking files. Keep the public API unchanged.
 
 **2e. `m5_shared/workspace/blobs.py`**
-- [ ] Raises bare `FileNotFoundError`; header requires an `AsfError` subclass.
-- [ ] Temp file is always `<digest>.tmp`: two processes storing the same blob race on it. Use `tempfile.NamedTemporaryFile(dir=target.parent, delete=False)` then `os.replace`, and treat "target already exists" after the race as success (Windows `replace` can raise `PermissionError` while another process holds the file).
+- [x] Raises bare `FileNotFoundError`; header requires an `AsfError` subclass.
+- [x] Temp file is always `<digest>.tmp`: two processes storing the same blob race on it. Use `tempfile.NamedTemporaryFile(dir=target.parent, delete=False)` then `os.replace`, and treat "target already exists" after the race as success (Windows `replace` can raise `PermissionError` while another process holds the file).
 
 **2f. General memory and speed audit (each implemented module).** For each file check and fix:
 - unbounded `fetchall()` on tables that grow (events, metrics, tasks): iterate the cursor or page with `LIMIT`/`seq >`;
@@ -132,34 +132,50 @@ Also remove the `except (NotImplementedError, Exception)` stub guards in `loggin
 
 Branches: `feat/m4-verification` (test_selection, failure_classifier, reviewer, gate), `feat/m4-worker` (strategies, worker_graph), `feat/m4-integration` (repair, integrator), `feat/m4-scheduler` (scheduler). File order as in `CONTINUATION.md`. If a file's `CONNECTS TO` imports from a stub, implement the callee first.
 
-- [ ] verification   - [ ] worker   - [ ] integration   - [ ] scheduler
+- [x] verification   - [x] worker   - [x] integration   - [x] scheduler
 
 ### Phase 4: M3 Orchestration (Batch 8)
 
 Branches: `feat/m3-lifecycle` (lifecycle, escalation, acceptance), `feat/m3-planning` (modes, strategies, test_authoring, planner_graph), `feat/m3-decomposition` (frontier, sizer, rubric, splitter, split_validator, leaf_certifier, decomposition_graph), `feat/m3-run-control` (run_control, run_graph).
 Keep the architecture rule: the orchestrator is deterministic code; leaf/split decisions use measurement plus the single T1 rubric call (architecture doc, Part 8). Never let a model approve its own split.
 
-- [ ] lifecycle   - [ ] planning   - [ ] decomposition   - [ ] run-control
+- [x] lifecycle   - [x] planning   - [x] decomposition   - [x] run-control
 
 ### Phase 5: M1 CLI (Batch 9)
 
 Branches: `feat/cli-ui` (render, menus, views), `feat/cli-commands` (one commit per command file), `feat/cli-flows` (project_input, run_controls, flows, app wiring).
 
-- [ ] ui   - [ ] commands   - [ ] flows
+- [x] ui   - [x] commands   - [x] flows
 
 ### Phase 6: Web and Skills (Batches 10, 11)
 
 Branches: `feat/web-viewer` (narrative, projection, server, static), `feat/skills` (each `skills/*/SKILL.md`, keep YAML frontmatter).
 The web server is read-only (there is a test that no write routes exist) and must bind to localhost only.
 
-- [ ] web   - [ ] skills
+- [x] web   - [x] skills
 
 ### Phase 7: End to end and performance (`perf/e2e`)
 
-- [ ] Remove the placeholder-to-xfail shim from Phase 0; `pytest` must have zero xfails from placeholders.
-- [ ] `scripts/smoke.py` runs one small request end to end with a local or stub model on Windows and Linux.
-- [ ] Profile one smoke run: `uv run python -X importtime -m asf ...` (startup), `cProfile` (hot paths), `tracemalloc` peak (memory). Record the numbers in this file and fix the top three offenders.
-- [ ] Lazy-import heavy modules in the CLI (langchain, markitdown, tree-sitter) so `factory --help` and `factory doctor` start fast.
+- [x] Remove the placeholder-to-xfail shim from Phase 0; `pytest` has zero xfails from placeholders (908 passed, 3 skipped).
+- [x] End to end: `tests/m3_orchestration/test_e2e.py` takes a request to tested, merged code on a real git repository with a scripted model (merged code, event log and report, and a wrong implementation rejected by the gate). `scripts/smoke.py` keeps its declared contract (compile, headers, forbidden scan, doctor).
+- [x] Profile start-up (`python -X importtime`, wall clock of `python -m asf ...`, median of 5 on Windows, Python 3.14):
+
+  | command | before | after |
+  |---|---|---|
+  | `factory --help` | 5.58 s | 1.80 s |
+  | `factory doctor` | 5.51 s | 1.91 s |
+  | `factory models list` | 5.32 s | 1.34 s |
+
+  Import time of `asf.cli.app` fell from 4.0 s to 1.1 s. The offenders were `langchain_mcp_adapters` and `mcp` (1.2 s), `langchain_openai` and `openai` (0.8 s), `langgraph` through the run and intake graphs (0.9 s), `langchain_core` tracers through the gateway (0.65 s), `markitdown` (0.5 s), `questionary` and `prompt_toolkit` (0.3 s) and `keyring` (0.1 s).
+- [x] Lazy-import heavy modules so `factory --help` and `factory doctor` start fast: `mcp_client` (module `__getattr__` keeps `MultiServerMCPClient` patchable), `gateway/providers`, `gateway/gateway` (`Runnable` for typing only, callback handler built with the model), `tokenizers`, `config/secrets`, `document_ingestion`, `cli/ui/menus`, and in `cli/commands/run.py` thin `start_run`/`resume_run`/`submit` wrappers that load the graphs on use. Still eager and still measurable: `typer` (0.22 s), `pydantic_settings` (0.17 s), `httpx` in `runtime/backends` (0.13 s).
+
+### Known limits after Phase 7
+
+- `runtime/calibration.py::calibrate` still reports estimated numbers, not measured ones. It needs a real VRAM and tokens-per-second probe against the running backend.
+- `m2_request/request_understanding.py` is deterministic only; it ignores `gateway` and `skills`. A model-assisted path using the `request-structuring` skill is the next step.
+- The default composition in `run_graph.default_components` is tested with fakes and one end-to-end run with a scripted model. A run against a real local or remote model has not been done.
+- `factory run --detach` relaunches the CLI process; subtree re-plan is approximated by a re-split.
+- The slowest test is the rejected-implementation end-to-end test (about 80 s): every repair attempt runs the real gate in a subprocess. A faster gate runner for that test would cut the suite from 2.6 minutes to about 1.5.
 
 ---
 
