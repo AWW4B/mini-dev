@@ -71,6 +71,7 @@ def _spec(max_turns: int = 4, wall_clock_s: int = 60) -> Any:
         acceptance_test_refs=["tests/test_billing.py"],
         capsules=[SimpleNamespace(module_id="ledger", operation="record", lines=["record(entry) -> None", "raises LedgerError", "idempotent"])],
         step_budget=SimpleNamespace(max_turns=max_turns, wall_clock_s=wall_clock_s),
+        context_budget_tokens=8192,
     )
 
 

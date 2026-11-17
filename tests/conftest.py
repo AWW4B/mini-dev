@@ -61,6 +61,12 @@
 #   - called by tests/cli/commands/test_dash.py: cli_project
 #   - called by tests/cli/test_flows.py: cli_project
 #   - called by tests/m3_orchestration/test_e2e.py: fake_paths
+#   - called by tests/m5_shared/memory/test_device_budget.py: fake_paths
+#   - called by tests/m5_shared/memory/test_budgets.py: fake_paths
+#   - called by tests/m5_shared/memory/test_router.py: fake_paths
+#   - called by tests/m5_shared/memory/test_tool_outputs.py: fake_paths
+#   - called by tests/m5_shared/memory/test_hooks.py: fake_paths
+#   - called by tests/cli/commands/test_memory_cmd.py: cli_project
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

@@ -1,0 +1,190 @@
+# FILE: src/asf/config/defaults/memory.toml
+# ROLE: Packaged defaults for the memory architecture: device shares, per-layer context shares, retention and tool-output rules, all as percentages.
+# ARCH REF: M5; p12 Context & Memory Service; docs/architecture/MEMORY_ARCHITECTURE.md
+# OWNS: Default percentages, the local model catalogue, the beta switch for tree retrieval
+# DOES NOT OWN: Model routing (models.toml); factory settings (factory.toml)
+# CONNECTS TO (external boundaries only):
+#   - imports from none: none
+#   - emits/consumes: none
+# INSTRUCTIONS (strict, imperative):
+#   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
+#   2. Keep every public name and signature declared below exactly as written; they are the contract other files rely on.
+#   3. Use only the standard library, the pinned dependencies in pyproject.toml, and the files listed under CONNECTS TO. Ask before adding a dependency.
+#   4. Open text files with encoding="utf-8" explicitly.
+#   5. Every limit is a percentage (0-100) of a measured quantity, never a fixed token or byte count. Each [layers.<role>] table must sum to 100.
+#   6. Keys must match src/asf/m5_shared/memory/device_budget.py and src/asf/m5_shared/memory/budgets.py exactly.
+# FORBIDDEN: shell=True; os.system; hardcoded absolute paths; container runtimes; importing project modules not listed under CONNECTS TO; printing secrets or API keys
+# ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
+# DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for this file.
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Device shares. Each limit is the smaller of "% of the device total" and "% of what is free right now", so the factory
+# never takes the whole machine, and never more than is actually free when it starts.
+# ---------------------------------------------------------------------------------------------------------------------
+[device]
+# everything mini-dev may use together (its own process + the local model servers)
+total_ram_pct = 60
+total_ram_free_pct = 80          # of RAM available at start
+vram_pct = 85                    # local models only; leave room for the desktop/compositor
+vram_free_pct = 95
+cpu_threads_pct = 75             # worker threads + model server threads
+disk_free_pct = 5                # memory database + offloaded tool output + blobs
+
+# split of the RAM share above
+process_ram_pct = 15             # the factory's own Python process (caches, indexes, sqlite page cache)
+models_ram_pct = 85              # CPU-resident models (T1) and any GPU spill of T2
+sqlite_cache_pct = 10            # of the process share: SQLite page cache of the memory database
+
+# a model that does not fit fully in VRAM may spill to RAM only while this much of it stays on the GPU
+min_gpu_fraction_pct = 85
+# runtime overhead of a llama.cpp server on top of weights + KV cache (compute buffers, CUDA context)
+runtime_overhead_pct = 12
+# KV cache precision: q8_0 halves the fp16 size with negligible quality loss for code
+kv_cache_bytes_pct = 50
+# context sizes the planner may choose from (powers of two that llama-server accepts)
+context_candidates = [4096, 8192, 16384, 32768]
+
+# Local model catalogue: weights are GGUF Q4_K_M file sizes; kv_bytes_per_token is fp16 (2 * layers * kv_heads * head_dim * 2).
+# quality is a coarse rank used only to prefer the stronger model that fits.
+[[device.catalog]]
+name = "Qwen3-1.7B-Instruct-Q4_K_M"
+roles = ["T1"]
+weights_gb = 1.11
+kv_bytes_per_token = 114688
+max_context = 32768
+quality = 1
+placement = "cpu"
+
+[[device.catalog]]
+name = "Qwen3-4B-Instruct-Q4_K_M"
+roles = ["T1", "T2"]
+weights_gb = 2.50
+kv_bytes_per_token = 147456
+max_context = 32768
+quality = 2
+placement = "gpu"
+
+[[device.catalog]]
+name = "Qwen2.5-Coder-3B-Instruct-Q4_K_M"
+roles = ["T2"]
+weights_gb = 1.93
+kv_bytes_per_token = 36864
+max_context = 32768
+quality = 2
+placement = "gpu"
+
+[[device.catalog]]
+name = "Qwen2.5-Coder-7B-Instruct-Q4_K_M"
+roles = ["T2"]
+weights_gb = 4.68
+kv_bytes_per_token = 57344
+max_context = 32768
+quality = 3
+placement = "gpu"
+
+[[device.catalog]]
+name = "Qwen2.5-Coder-14B-Instruct-Q4_K_M"
+roles = ["T2"]
+weights_gb = 8.99
+kv_bytes_per_token = 196608
+max_context = 32768
+quality = 4
+placement = "gpu"
+
+[[device.catalog]]
+name = "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M"
+roles = ["T2"]
+weights_gb = 18.6
+kv_bytes_per_token = 98304
+max_context = 65536
+quality = 5
+placement = "gpu"
+
+# Remote models are not sized here; their window is a property of the provider's model (override per profile if smaller).
+[remote]
+window_tokens = 131072
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Context layers: the share of a model's usable window (c_eff) each layer may take. One table per role; each sums to 100.
+# output: reserved for the answer; system: instructions + tool schemas; procedural: selected skills and playbook rules;
+# task: spec + pinned capsules (must-have); working: the files being changed; tools: live tool results; episodic: past
+# attempts and runs; semantic: project facts and decisions; session: this run's state.
+# ---------------------------------------------------------------------------------------------------------------------
+[layers.T1]          # tiny model: classification, rubric, summaries. No history.
+output = 25
+system = 15
+procedural = 5
+task = 40
+working = 15
+tools = 0
+episodic = 0
+semantic = 0
+session = 0
+
+[layers.T2]          # local coder
+output = 20
+system = 8
+procedural = 7
+task = 15
+working = 30
+tools = 12
+episodic = 3
+semantic = 3
+session = 2
+
+[layers.T3]          # planner (remote): needs the project's facts and history more than file bodies
+output = 25
+system = 6
+procedural = 8
+task = 15
+working = 12
+tools = 4
+episodic = 10
+semantic = 14
+session = 6
+
+[layers.reviewer]    # reviews a diff against the spec
+output = 15
+system = 6
+procedural = 5
+task = 20
+working = 40
+tools = 6
+episodic = 3
+semantic = 3
+session = 2
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Tool, MCP and skill output in the transcript
+# ---------------------------------------------------------------------------------------------------------------------
+[tools]
+per_result_pct = 4               # one builtin tool result, % of the window, before head/tail shaping
+mcp_per_result_pct = 2           # MCP output is third-party and untrusted: half the builtin share
+keep_recent_results = 3          # older results are cleared to a one-line stub with a reference to the full text
+offload_over_pct = 1             # results larger than this % of the window are stored in full as a blob
+compact_at_pct = 80              # when the transcript reaches this % of (window - output), clear, then compact
+head_pct = 40                    # of a shaped result: kept from the start
+tail_pct = 60                    # kept from the end (errors and test summaries live at the end)
+
+[skills]
+index_pct = 20                   # of the procedural layer: names + descriptions of every skill (progressive disclosure)
+max_bodies = 2                   # at most this many full skill bodies per call
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Retention. Shares of the memory database's row budget, which is itself derived from device.disk_free_pct.
+# ---------------------------------------------------------------------------------------------------------------------
+[retention]
+avg_row_bytes = 2048             # used only to turn the disk share into a row budget
+episodic_pct = 45
+semantic_pct = 25
+procedural_pct = 10
+session_pct = 20
+min_score_pct = 15               # below this relevance (% of the best match) an item is never included
+promote_after = 2                # an episodic lesson seen in this many runs becomes a semantic fact or playbook rule
+retire_harmful_pct = 60          # a playbook rule whose outcomes are this % harmful is retired
+
+[beta]
+tree_rag = false                 # tree-based retrieval (memory stays as data; a navigator chooses branches)
+tree_navigator = "lexical"       # lexical (deterministic, no model) | model (T1 picks branches, lexical fallback)
+tree_beam = 3                    # branches opened per level
+tree_max_depth = 4

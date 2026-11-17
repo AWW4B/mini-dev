@@ -23,6 +23,7 @@
 #   - imports from src/asf/cli/commands/web.py: register (command group)
 #   - imports from src/asf/cli/flows.py: main_menu (bare factory)
 #   - imports from src/asf/logging_setup.py: configure_logging (D-26)
+#   - imports from src/asf/cli/commands/memory_cmd.py: register (command group)
 #   - called by src/asf/__main__.py: main
 #   - called by tests/cli/test_app.py: main
 #   - called by pyproject.toml: [project.scripts] factory = "asf.cli.app:main"
@@ -51,6 +52,7 @@ import asf.cli.commands.history as history
 import asf.cli.commands.inbox as inbox
 import asf.cli.commands.init as init
 import asf.cli.commands.mcp as mcp
+import asf.cli.commands.memory_cmd as memory_cmd
 import asf.cli.commands.models as models
 import asf.cli.commands.project as project
 import asf.cli.commands.report as report
@@ -82,6 +84,7 @@ _COMMAND_MODULES = (
     config_cmd,
     stats,
     mcp,
+    memory_cmd,
     web,
 )
 for _mod in _COMMAND_MODULES:
