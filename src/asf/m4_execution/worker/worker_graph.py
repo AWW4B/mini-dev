@@ -110,7 +110,9 @@ def _create_worktree(workspace: Workspace, spec: LeafTaskSpec) -> str:
     raise WorkerError(f"Could not create a worktree for task {task_id}: {created.error_kind}")
 
 
-def _context_text(spec: LeafTaskSpec, lease: SlotLease, worktree: str, service: ContextService, failure_evidence: str | None) -> str:
+def _context_text(
+    spec: LeafTaskSpec, lease: SlotLease, worktree: str, service: ContextService, failure_evidence: str | None, memory_items: list[ContextItem] | None = None
+) -> str:
     """IF-11: assemble the ContextPack (spec, pinned capsules, allowed files, latest failure) under the token budget."""
     def add(tier: int, ref: str, text: str) -> None:
         service.add_item(ContextItem.model_validate({"tier": tier, "source_ref": ref, "sha256": "", "tokens": 0, "text": text}))
@@ -124,6 +126,8 @@ def _context_text(spec: LeafTaskSpec, lease: SlotLease, worktree: str, service: 
             add(2, f"file:{rel}", path.read_text(encoding="utf-8", errors="replace")[:_MAX_FILE_CHARS])
     if failure_evidence:
         add(5, "latest-failure", failure_evidence[-4000:])
+    for item in memory_items or []:  # chosen by the memory router under the role's layer budgets; optional tiers only
+        service.add_item(item)
     pack = service.build(
         ContextRequest.model_validate(
             {"task_id": str(spec.task_id), "role": "coder", "budget_tokens": spec.context_budget_tokens, "model_id": lease.model_id}
@@ -160,6 +164,7 @@ def run_attempt(
     strategy: WorkerStrategyName = "tool_loop",
     failure_evidence: str | None = None,
     emit: Emit | None = None,
+    memory_items: list[ContextItem] | None = None,
 ) -> ChangeSet:
     """One attempt: worktree -> ContextPack -> bounded strategy loop (lease kept alive) -> committed ChangeSet.
 
@@ -175,7 +180,7 @@ def run_attempt(
     publish("TASK_RECEIVED", {"goal_summary": spec.goal[:200], "from_role": "scheduler"})
     worktree = _create_worktree(workspace, spec)
     service = context_service if context_service is not None else ContextService()
-    context = _context_text(spec, lease, worktree, service, failure_evidence)
+    context = _context_text(spec, lease, worktree, service, failure_evidence, memory_items)
 
     publish("STEP_STARTED", {"strategy": strategy, "summary": f"working in {worktree}"})
     with _Heartbeat(runtime, lease):

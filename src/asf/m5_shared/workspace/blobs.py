@@ -22,6 +22,8 @@
 #   - called by tests/web/test_projection.py: BlobStore
 #   - called by tests/web/test_server.py: BlobStore
 #   - called by tests/m3_orchestration/test_e2e.py: BlobStore
+#   - called by src/asf/m5_shared/memory/tool_outputs.py: BlobStore
+#   - called by tests/m5_shared/memory/test_tool_outputs.py: BlobStore
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

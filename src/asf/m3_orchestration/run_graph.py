@@ -35,6 +35,7 @@
 #   - imports from src/asf/m5_shared/events/event_log.py: EventLog (the log the relay feeds)
 #   - imports from src/asf/m5_shared/state_store/outbox.py: OutboxRelay (committed events reach the event log)
 #   - imports from src/asf/m3_orchestration/planning/test_authoring.py: author_acceptance_tests (acceptance tests written by the planner tier)
+#   - imports from src/asf/m5_shared/memory/hooks.py: MemoryHooks (project memory around attempts)
 #   - called by src/asf/cli/commands/run.py: start_run, resume_run
 #   - called by tests/m3_orchestration/test_run_graph.py: build_run_graph, start_run, resume_run
 #   - called by tests/m3_orchestration/test_e2e.py: start_run
@@ -359,6 +360,9 @@ def _node_report(state: RunState) -> dict[str, Any]:
     )
     ref = blobs.put(text.encode("utf-8"))
     _set_status(store, state["run_id"], "DONE", "run_completed", {"report_ref": ref})
+    memory = _dep("memory")
+    if memory is not None:
+        memory.after_run(state["run_id"], "DONE")
     return {"status": "DONE", "report_ref": ref}
 
 
@@ -487,17 +491,32 @@ def _build_execution(components: dict[str, Any], project_root: Path, run_id: str
     if overrides.get("test_runner") is not None:
         components["test_runner"] = overrides["test_runner"]
 
+    memory = overrides.get("memory") or components.get("memory")
+    if memory is None and not overrides.get("no_memory"):
+        try:
+            from asf.m5_shared.memory.hooks import MemoryHooks
+
+            memory = MemoryHooks.open(project_root, gateway=gateway)
+        except Exception:  # noqa: BLE001 - memory is an aid, never a requirement: the run continues without it
+            logger.warning("project memory is unavailable; running without it", exc_info=True)
+    components["memory"] = memory
+
     def attempt(spec: Any, lease: Any, attempt_no: int) -> Any:
         # Runs on a scheduler thread: nothing here may touch the SQLite state store (its connection is thread-bound),
-        # so contracts are promoted by the driver on the main thread rather than inside the gate.
+        # so contracts are promoted by the driver on the main thread rather than inside the gate. Memory has its own
+        # thread-safe database.
+        routed = memory.context_for(spec, run_id or None) if memory is not None else None
         change = run_attempt(
             spec, lease, attempt_no, workspace=workspace, gateway=gateway, executor=executor, runtime=runtime,
-            failure_evidence=scheduler_box["s"].latest_evidence(str(spec.task_id)),
+            failure_evidence=scheduler_box["s"].latest_evidence(str(spec.task_id)), memory_items=routed.items if routed is not None else None,
         )
-        return verify_change_set(
+        verdict = verify_change_set(
             change, workspace=workspace, gateway=gateway, allowed_files=list(spec.allowed_files), acceptance_refs=list(spec.acceptance_test_refs),
             runner=gate_runner,
         )
+        if memory is not None and routed is not None:
+            memory.after_attempt(spec, run_id or None, attempt_no, routed, verdict)
+        return verdict
 
     scheduler = TaskScheduler(runtime=runtime, store=store, attempt_runner=attempt, outcome_sink=outcomes.append)
     scheduler_box["s"] = scheduler

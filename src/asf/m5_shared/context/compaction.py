@@ -6,6 +6,7 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/m5_shared/gateway/gateway.py: ModelGateway (T1 summaries)
 #   - called by tests/m5_shared/context/test_compaction.py: compact_history
+#   - called by src/asf/m4_execution/worker/strategies.py: compact_history
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

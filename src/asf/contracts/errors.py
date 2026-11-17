@@ -39,6 +39,11 @@
 #   - called by src/asf/cli/context.py: ConfigError
 #   - called by src/asf/cli/commands/project.py: ConfigError
 #   - called by src/asf/cli/commands/run.py: ConfigError
+#   - called by src/asf/m5_shared/memory/device_budget.py: ConfigError
+#   - called by src/asf/m5_shared/memory/budgets.py: ConfigError
+#   - called by src/asf/m5_shared/memory/store.py: ConfigError
+#   - called by tests/m5_shared/memory/test_budgets.py: ConfigError
+#   - called by tests/m5_shared/memory/test_device_budget.py: ConfigError
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

@@ -10,6 +10,9 @@
 #   - imports from src/asf/contracts/tasks.py: LeafTaskSpec (task)
 #   - imports from src/asf/contracts/tools.py: ToolInvocation (tool calls through the executor)
 #   - imports from src/asf/platform/select.py: get_platform (git apply)
+#   - imports from src/asf/m5_shared/memory/device_budget.py: load_memory_config (tool output percentages)
+#   - imports from src/asf/m5_shared/memory/tool_outputs.py: ShapedOutput, ToolOutputPolicy (shaped tool results)
+#   - imports from src/asf/m5_shared/context/compaction.py: compact_history (older turns)
 #   - called by src/asf/m4_execution/worker/worker_graph.py: run_strategy, WorkerStrategyName
 #   - called by tests/m4_execution/worker/test_strategies.py: run_strategy, WorkerStrategyName, WorkerBlocked, WorkerFormatError
 #   - emits/consumes: none
@@ -33,7 +36,10 @@ from typing import Any, Literal, cast
 
 from asf.contracts.tasks import LeafTaskSpec
 from asf.contracts.tools import ToolInvocation
+from asf.m5_shared.context.compaction import compact_history
 from asf.m5_shared.gateway.gateway import ModelGateway
+from asf.m5_shared.memory.device_budget import load_memory_config
+from asf.m5_shared.memory.tool_outputs import ShapedOutput, ToolOutputPolicy
 from asf.m5_shared.tools.codeexec.runner import execute_code
 from asf.m5_shared.tools.executor import ToolExecutor
 from asf.platform.select import get_platform
@@ -134,24 +140,63 @@ def _invoke_tool(executor: ToolExecutor, spec: LeafTaskSpec, tool: str, args: di
     return f"[{result.status}] {result.output[:_TOOL_OUTPUT_CHARS]}"
 
 
+def _tool_source(executor: ToolExecutor, tool: str) -> Any:
+    try:
+        return "mcp" if executor.registry.get(tool)[0].source == "mcp" else "builtin"
+    except Exception:  # noqa: BLE001 - an unknown tool is rejected by the executor itself; shaping treats it as builtin
+        return "builtin"
+
+
+def _shaped_tool(policy: ToolOutputPolicy, executor: ToolExecutor, spec: LeafTaskSpec, tool: str, args: dict[str, Any], worktree: str) -> ShapedOutput:
+    """Run a tool and shape its output for the transcript (memory.toml [tools]: % caps, head/tail, untrusted MCP marking)."""
+    invocation = ToolInvocation.model_validate(
+        {"tool": tool, "args": args, "role": _ROLE, "task_id": str(spec.task_id), "workspace_dir": worktree}
+    )
+    result = executor.invoke(invocation, spec.allowed_files)
+    shaped = policy.shape(tool, str(result.output), status=str(result.status), source=_tool_source(executor, tool))
+    return shaped.model_copy(update={"text": f"[{result.status}] {shaped.text}"})
+
+
+def _policy(spec: LeafTaskSpec) -> ToolOutputPolicy:
+    return ToolOutputPolicy(load_memory_config(), window_tokens=spec.context_budget_tokens)
+
+
 def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executor: ToolExecutor, context: str) -> str:
-    transcript = _header(spec, context, _TOOL_SHAPE)
+    header = _header(spec, context, _TOOL_SHAPE)
+    policy = _policy(spec)
+    calls: list[str] = []  # "Turn n: tool(args)" or a note, one per turn
+    results: list[ShapedOutput | None] = []
+    summary = ""  # older turns, compacted once the transcript reaches compact_at_pct of the window
+
+    def transcript() -> str:
+        texts = iter(policy.clear_stale([r for r in results if r is not None]))  # only the latest results stay in full
+        body = [f"{c}\nResult: {next(texts)}" if r is not None else c for c, r in zip(calls, results, strict=True)]
+        return header + (f"\n\nEarlier turns (summary): {summary}" if summary else "") + "".join(f"\n\n{b}" for b in body)
+
     deadline = _deadline(spec)
     for turn in range(1, spec.step_budget.max_turns + 1):
         if time.monotonic() > deadline:
             raise WorkerBlocked("SPEC_TOO_LARGE: the wall-clock budget for the attempt was exhausted")
-        step = _ask(gateway, transcript)
+        text = transcript()
+        if policy.should_compact(len(text)) and len(calls) > policy.keep_recent:
+            cut = len(calls) - policy.keep_recent
+            old = [c if r is None else f"{c} -> {r.text[:300]}" for c, r in zip(calls[:cut], results[:cut], strict=True)]
+            summary = compact_history(gateway, [summary, *old] if summary else old, max(64, spec.context_budget_tokens // 20))
+            del calls[:cut], results[:cut]
+            text = transcript()
+        step = _ask(gateway, text)
         action = step.get("action")
         if action == "done":
             return f"tool_loop finished in {turn} step(s): {step.get('message', '')}"
         if action == "blocked":
             raise _blocked(step)
         if action != "tool" or not isinstance(step.get("tool"), str):
-            transcript += f"\n\nTurn {turn}: invalid action {action!r}; use tool, done or blocked."
+            calls.append(f"Turn {turn}: invalid action {action!r}; use tool, done or blocked.")
+            results.append(None)
             continue
         args = step.get("args") if isinstance(step.get("args"), dict) else {}
-        observation = _invoke_tool(executor, spec, str(step["tool"]), cast(dict[str, Any], args), worktree)
-        transcript += f"\n\nTurn {turn}: {step['tool']}({json.dumps(args)[:500]})\nResult: {observation}"
+        calls.append(f"Turn {turn}: {step['tool']}({json.dumps(args)[:500]})")
+        results.append(_shaped_tool(policy, executor, spec, str(step["tool"]), cast(dict[str, Any], args), worktree))
     raise WorkerBlocked("SPEC_TOO_LARGE: the step budget was exhausted before the model reported done")
 
 

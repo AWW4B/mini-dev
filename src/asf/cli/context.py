@@ -32,6 +32,8 @@
 #   - called by src/asf/cli/commands/trace.py: EXIT_OK, EXIT_USER, default_output, guard, renderer_for
 #   - called by src/asf/cli/commands/web.py: EXIT_ENV, EXIT_OK, guard, renderer_for
 #   - called by src/asf/cli/flows.py: EXIT_OK, EXIT_USER, open_store
+#   - called by src/asf/cli/commands/memory_cmd.py: EXIT_OK, EXIT_USER, guard, project_root, renderer_for
+#   - called by tests/cli/commands/test_memory_cmd.py: EXIT_USER
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
