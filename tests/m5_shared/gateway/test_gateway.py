@@ -123,9 +123,11 @@ def test_every_stored_key_and_fallback_becomes_a_route_in_order(monkeypatch: pyt
     monkeypatch.setattr("asf.m5_shared.gateway.gateway.get_api_keys", lambda provider: keys.get(provider, []))
     gateway = ModelGateway("free", _budget())
     routes = gateway._routes_for(gateway.roles["reviewer"])
-    assert [(r.provider, r.key_index) for r in routes] == [("groq", 0), ("groq", 1), ("groq", 2), ("gemini", 0)]
-    assert routes[0].model == "openai/gpt-oss-20b"
-    assert routes[3].model == "gemini-2.5-flash"
+    assert [(r.provider, r.model.split("/")[-1], r.key_index) for r in routes] == [
+        ("groq", "gpt-oss-20b", 0), ("groq", "gpt-oss-20b", 1), ("groq", "gpt-oss-20b", 2),
+        ("groq", "gpt-oss-120b", 0), ("groq", "gpt-oss-120b", 1), ("groq", "gpt-oss-120b", 2), ("gemini", "gemini-2.5-flash", 0),
+    ]
+    assert routes[0].reasoning_effort == "low"
     assert routes[0].base_url == "https://api.groq.com/openai/v1"
 
 
