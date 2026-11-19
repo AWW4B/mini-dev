@@ -4,7 +4,6 @@
 # OWNS: Test cases for src/asf/m5_shared/gateway/gateway.py
 # DOES NOT OWN: Production code; fixtures shared with other modules (put those in tests/conftest.py)
 # CONNECTS TO (external boundaries only):
-#   - imports from src/asf/contracts/models.py: ModelRole (role enum)
 #   - imports from src/asf/m5_shared/gateway/gateway.py: ModelGateway (unit under test)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
@@ -26,7 +25,6 @@ import pytest
 from langchain_core.runnables import Runnable, RunnableLambda
 from pydantic import BaseModel
 
-from asf.contracts.models import ModelRole
 from asf.m5_shared.gateway.gateway import ModelGateway
 
 
@@ -137,4 +135,4 @@ def test_a_missing_primary_key_falls_through_to_the_next_provider(monkeypatch: p
     monkeypatch.setattr("asf.m5_shared.gateway.gateway.get_api_keys", lambda provider: keys.get(provider, []))
     monkeypatch.setattr("asf.m5_shared.gateway.providers.get_api_keys", lambda provider: keys.get(provider, []))
     monkeypatch.setattr("asf.m5_shared.gateway.providers.get_api_key", lambda provider: (keys.get(provider) or [""])[0] or None)
-    assert ModelGateway("free", _budget()).model_for(ModelRole.REVIEWER, "review") is not None
+    assert ModelGateway("free", _budget()).model_for("reviewer", "review")  # type: ignore[arg-type] is not None
