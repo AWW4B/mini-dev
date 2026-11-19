@@ -1,6 +1,6 @@
 <!--
 FILE: src/asf/web/static/index.html
-ROLE: The single read-only viewer page: participant column, narrative thread, detail drawer, internal-events toggle.
+ROLE: The single read-only viewer page: an agent group conversation with an agent list, message thread, details sheet and internal-events switch (Apple-style layout).
 ARCH REF: M1; p02; D-14b
 OWNS: Viewer front-end (no build step, no Node)
 DOES NOT OWN: Data (served by server.py)
@@ -24,20 +24,31 @@ DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for t
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
 <title>Factory Viewer</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header id="run-header"><span id="run-title">Factory run</span> <span id="run-status" class="pill"></span> <span id="connection" class="muted"></span></header>
-<aside id="participants" aria-label="Participants"></aside>
-<main id="thread" aria-live="polite"></main>
-<section id="detail" hidden>
-  <button type="button" id="detail-close">Close</button>
-  <h2 id="detail-title"></h2>
+<header id="run-header">
+  <div class="bar-side"><span id="connection" class="conn" role="status">Connecting</span></div>
+  <h1 id="run-title">Factory run</h1>
+  <div class="bar-side end"><span id="run-status" class="pill"></span></div>
+</header>
+<aside id="participants" aria-label="Agents in this run"></aside>
+<main id="thread" role="log" aria-live="polite" aria-label="Agent conversation" tabindex="-1"></main>
+<button type="button" id="jump" hidden></button>
+<div id="scrim" hidden></div>
+<section id="detail" role="dialog" aria-labelledby="detail-title" hidden>
+  <div class="grabber"></div>
+  <div class="sheet-bar"><h2 id="detail-title">Details</h2><button type="button" id="detail-close">Done</button></div>
+  <p id="detail-ref"></p>
   <pre id="detail-text"></pre>
 </section>
-<footer><label><input type="checkbox" id="show-internal"> show internal events</label> <span class="muted">read-only view; it cannot change the run</span></footer>
+<footer>
+  <label class="switch-row"><span>Show internal events</span><input type="checkbox" id="show-internal" role="switch"></label>
+  <span class="muted">Read-only view. It cannot change the run.</span>
+</footer>
 <script src="/static/app.js"></script>
 </body>
 </html>
