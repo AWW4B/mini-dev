@@ -106,3 +106,14 @@ def test_get_api_keys_reads_numbered_and_comma_separated_keys(fake_paths: Any, m
     assert get_api_keys("groq") == ["k1", "k2", "k3"]
     assert get_api_key("groq") == "k1"
     assert get_api_keys("nobody") == []
+
+
+def test_a_project_dotenv_is_read_after_the_config_dir(fake_paths: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """Keys in <project>/.env are found; the config dir's own .env wins when both define the same name."""
+    monkeypatch.setattr("asf.config.secrets._keyring_get", lambda name: None)
+    monkeypatch.delenv("FACTORY_GROQ_API_KEY", raising=False)
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".env").write_text("FACTORY_GROQ_API_KEY=from-project" + chr(10) + "FACTORY_GROQ_API_KEY_2=second" + chr(10), encoding="utf-8")
+    monkeypatch.chdir(project)
+    assert get_api_keys("groq") == ["from-project", "second"]

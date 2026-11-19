@@ -42,7 +42,7 @@ PLACEHOLDERS = ("[YOUR NAME]", "[YOUR EMAIL]")
 def repo_files() -> list[Path]:
     out = []
     for p in sorted(ROOT.rglob("*")):
-        if p.is_file() and not (set(p.relative_to(ROOT).parts) & SKIP_DIRS) and p.suffix not in {".pyc", ".gguf", ".zip"}:
+        if p.is_file() and not (set(p.relative_to(ROOT).parts) & SKIP_DIRS) and p.suffix not in {".pyc", ".gguf", ".zip"} and p.name != ".env":  # .env holds local keys and is git-ignored
             out.append(p)
     return out
 
