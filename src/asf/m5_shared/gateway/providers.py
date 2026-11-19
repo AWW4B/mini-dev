@@ -85,6 +85,8 @@ def build_chat_model(route: RouteConfig) -> "BaseChatModel":
 
     # OpenAI, Groq, xAI, or Gemini compatibility endpoint via ChatOpenAI
     openai_extra: dict[str, Any] = dict(route.params)
+    openai_extra.setdefault("timeout", 60.0)  # a hung remote route must fail over to the next one, not block for the client's 10 minute default
+    openai_extra.setdefault("max_retries", 1)
     if route.reasoning_effort:
         openai_extra["reasoning_effort"] = route.reasoning_effort
 

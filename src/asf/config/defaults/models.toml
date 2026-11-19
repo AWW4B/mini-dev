@@ -76,7 +76,7 @@ base_url = "https://api.groq.com/openai/v1"
 default_model = "openai/gpt-oss-120b"      # the strongest Groq text model; the 20B one is used as a fast second model
 [providers.gemini]
 base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-default_model = "gemini-2.5-flash"
+default_model = "gemini-3.5-flash"       # gemini-3.8-flash timed out on a free key; 3.5-flash answered in 2.4 s
 [providers.xai]
 base_url = "https://api.x.ai/v1"
 [providers.openrouter]
