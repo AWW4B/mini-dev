@@ -91,7 +91,11 @@ def _lookup(name: str, env_name: str) -> str | None:
     env_val = os.environ.get(env_name)
     if env_val:
         return env_val
-    return _load_dotenv(get_paths().config_dir).get(env_name) or None
+    for folder in (get_paths().config_dir, Path.cwd()):  # the user's config dir, then the project's own .env (git ignores it)
+        found = _load_dotenv(folder).get(env_name)
+        if found:
+            return found
+    return None
 
 
 def get_api_keys(provider: str) -> list[str]:
