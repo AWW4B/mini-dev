@@ -9,6 +9,7 @@
 #   - imports from src/asf/m5_shared/gateway/providers.py: RouteConfig, build_chat_model (construction)
 #   - imports from src/asf/m5_shared/gateway/usage_callback.py: UsageCallbackHandler (accounting)
 #   - imports from src/asf/contracts/errors.py: BudgetExceeded, ProviderUnavailable (error types)
+#   - imports from src/asf/config/secrets.py: get_api_keys (one route per stored key, so a rate limited key falls through to the next)
 #   - imports from src/asf/config/loader.py: load_layered (the layered models.toml)
 #   - called by src/asf/m5_shared/context/compaction.py: ModelGateway
 #   - called by src/asf/m2_request/prompt_normalisation.py: ModelGateway
@@ -43,6 +44,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from asf.config.loader import load_layered
+from asf.config.secrets import get_api_keys
 from asf.contracts.budget import RunBudget
 from asf.contracts.errors import BudgetExceeded, ProviderUnavailable
 from asf.contracts.models import ModelRole
@@ -59,12 +61,14 @@ class ModelGateway:
     budget: RunBudget
     roles: dict[str, dict[str, Any]]
     strategies: dict[str, str]
+    providers: dict[str, dict[str, Any]]
 
     def __init__(self, profile_name: str, budget: RunBudget) -> None:
         self.profile_name = profile_name
         self.budget = budget
         self.roles = {}
         self.strategies = {}
+        self.providers = {}
         self._load_config()
 
     def _load_config(self) -> None:
@@ -74,6 +78,7 @@ class ModelGateway:
         profile_data = profiles.get(self.profile_name, {})
         self.roles = profile_data.get("roles", {})
         self.strategies = data.get("strategies", {})
+        self.providers = {str(k): dict(v) for k, v in data.get("providers", {}).items()}
 
         if not self.roles:
             if self.profile_name == "local-only":
@@ -110,7 +115,7 @@ class ModelGateway:
             if prov and prov != "local":
                 providers_used.add(prov)
             for fb in rdata.get("fallbacks", []):
-                fb_str = str(fb)
+                fb_str = str(fb.get("provider", "")) if isinstance(fb, dict) else str(fb)
                 if fb_str and fb_str != "local":
                     providers_used.add(fb_str)
             if role_name in ("T2", "coder") and prov == "local":
@@ -150,20 +155,7 @@ class ModelGateway:
 
         role_cfg = self.roles.get(role_key, {})
         provider = str(role_cfg.get("provider", "local"))
-        model_name = str(role_cfg.get("model", "")) or ("gpt-4o" if provider == "openai" else "default")
-        fallbacks = list(role_cfg.get("fallbacks", []))
-
-        route = RouteConfig(
-            provider=provider,
-            model=model_name,
-            base_url=str(role_cfg["base_url"]) if role_cfg.get("base_url") else None,  # a role may point at its own server (two local models)
-            params=dict(role_cfg.get("params", {})),
-            reasoning_effort=str(role_cfg["reasoning_effort"]) if role_cfg.get("reasoning_effort") else None,
-        )
-        try:
-            base_model = build_chat_model(route)
-        except Exception as err:
-            raise ProviderUnavailable(f"Provider '{provider}' unavailable: {err}") from err
+        routes = self._routes_for(role_cfg)
 
         strategy = self.strategies.get("worker", "tool_loop")
         # loads langchain_core callbacks, so it is imported when a model is built, not when the module is
@@ -176,34 +168,66 @@ class ModelGateway:
             strategy=strategy,
         )
 
-        runnable: Runnable[Any, Any] = base_model.with_retry(stop_after_attempt=3)
+        runnables: list[Runnable[Any, Any]] = []
+        first_error: Exception | None = None
+        for route in routes:
+            try:
+                runnables.append(self._runnable(build_chat_model(route), output_schema, route.provider))
+            except Exception as err:  # noqa: BLE001 - an unusable route (no key, missing extra) is skipped while another can serve
+                first_error = first_error or err
+                logger.warning("route %s (key %d) is unavailable and was skipped: %s", route.provider, route.key_index + 1, err)
+        if not runnables:
+            raise ProviderUnavailable(f"Provider '{provider}' unavailable: {first_error}") from first_error
 
-        if output_schema is not None:
-            structured = getattr(base_model, "with_structured_output", None)
-            if structured is not None:
-                try:
-                    runnable = base_model.with_structured_output(output_schema, method="json_schema").with_retry(
-                        stop_after_attempt=3
+        runnable = runnables[0].with_fallbacks(runnables[1:]) if len(runnables) > 1 else runnables[0]
+        return runnable.with_config(callbacks=[usage_handler])
+
+    def _routes_for(self, role_cfg: dict[str, Any]) -> list[RouteConfig]:
+        """The ordered routes a call may take: the role's provider, then each fallback; one route per stored key.
+
+        A fallback is a provider name or a table ``{provider, model, base_url, params}``. A name takes the model from
+        ``[providers.<name>] default_model`` and the address from ``[providers.<name>] base_url``. When a provider's key
+        is rate limited the next key is tried, then the next provider.
+        """
+        entries: list[dict[str, Any]] = [dict(role_cfg)]
+        for fb in role_cfg.get("fallbacks", []):
+            entries.append(dict(fb) if isinstance(fb, dict) else {"provider": str(fb)})
+        routes: list[RouteConfig] = []
+        for entry in entries:
+            prov = str(entry.get("provider", "local"))
+            table = self.providers.get(prov, {})
+            model_name = str(entry.get("model") or table.get("default_model") or "") or ("gpt-4o" if prov == "openai" else "default")
+            base_url = entry.get("base_url") or table.get("base_url") or None
+            effort = entry.get("reasoning_effort")
+            is_local = prov.lower() in ("local", "llama", "llama-server", "ollama", "vllm")
+            key_count = 1 if is_local else max(1, len(get_api_keys(prov)) or (len(get_api_keys("google")) if prov == "gemini" else 0))
+            for index in range(key_count):
+                routes.append(
+                    RouteConfig(
+                        provider=prov,
+                        model=model_name,
+                        base_url=str(base_url) if base_url else None,  # a role may point at its own server (two local models)
+                        params=dict(entry.get("params", table.get("params", {}))),
+                        reasoning_effort=str(effort) if effort else None,
+                        key_index=index,
                     )
-                except Exception:  # noqa: BLE001 - the provider rejects strict json_schema output: use its default mode
-                    logger.debug("json_schema structured output unsupported by %s; using the default method", provider, exc_info=True)
-                    runnable = base_model.with_structured_output(output_schema).with_retry(stop_after_attempt=3)
+                )
+        return routes
 
-        if fallbacks:
-            fallback_models: list[Runnable[Any, Any]] = []
-            for fb_provider in fallbacks:
-                fb_route = RouteConfig(provider=str(fb_provider), model="default")
-                try:
-                    fb_chat = build_chat_model(fb_route)
-                    if output_schema is not None and hasattr(fb_chat, "with_structured_output"):
-                        fb_runnable = fb_chat.with_structured_output(output_schema).with_retry(stop_after_attempt=3)
-                    else:
-                        fb_runnable = fb_chat.with_retry(stop_after_attempt=3)
-                    fallback_models.append(fb_runnable)
-                except Exception:  # noqa: BLE001 - one unusable fallback route must not break the primary route
-                    logger.warning("fallback route %s is unavailable and was skipped", fb_provider, exc_info=True)
-            if fallback_models:
-                runnable = runnable.with_fallbacks(fallback_models)
+    @staticmethod
+    def _runnable(chat: Any, output_schema: type[Any] | None, provider: str) -> "Runnable[Any, Any]":
+        """One route as a runnable. Only transient failures are retried here: a rate limit (429) or a bad key moves on to the next route at once."""
+        try:
+            import openai
 
-        runnable = runnable.with_config(callbacks=[usage_handler])
-        return runnable
+            transient: tuple[type[BaseException], ...] = (openai.APIConnectionError, openai.APITimeoutError, openai.InternalServerError)
+        except ImportError:
+            transient = (ConnectionError, TimeoutError)
+        retry: dict[str, Any] = {"retry_if_exception_type": transient, "stop_after_attempt": 3}
+        if output_schema is not None and getattr(chat, "with_structured_output", None) is not None:
+            try:
+                return chat.with_structured_output(output_schema, method="json_schema").with_retry(**retry)  # type: ignore[no-any-return]
+            except Exception:  # noqa: BLE001 - the provider rejects strict json_schema output: use its default mode
+                logger.debug("json_schema structured output unsupported by %s; using the default method", provider, exc_info=True)
+                return chat.with_structured_output(output_schema).with_retry(**retry)  # type: ignore[no-any-return]
+        return chat.with_retry(**retry)  # type: ignore[no-any-return]

@@ -4,7 +4,7 @@
 # OWNS: Route config and chat-model construction
 # DOES NOT OWN: Budgets, fallbacks and retries (gateway.py)
 # CONNECTS TO (external boundaries only):
-#   - imports from src/asf/config/secrets.py: get_api_key (D-38 keys)
+#   - imports from src/asf/config/secrets.py: get_api_key, get_api_keys (D-38 keys)
 #   - called by src/asf/m5_shared/gateway/gateway.py: RouteConfig, build_chat_model
 #   - called by tests/m5_shared/gateway/test_providers.py: RouteConfig, build_chat_model
 #   - emits/consumes: none
@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, SecretStr
 
-from asf.config.secrets import get_api_key
+from asf.config.secrets import get_api_key, get_api_keys
 
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
@@ -35,17 +35,19 @@ class RouteConfig(BaseModel):
     base_url: str | None = None
     params: dict[str, object] = {}
     reasoning_effort: str | None = None
+    key_index: int = 0  # which of the provider's keys this route uses (free tiers limit each key separately)
 
 
 def build_chat_model(route: RouteConfig) -> "BaseChatModel":
     from langchain_openai import ChatOpenAI  # imported when a model is built: it costs seconds and most commands never build one
 
     provider = route.provider.lower().strip()
-    key = get_api_key(route.provider)
-    if provider == "gemini" and not key:
-        key = get_api_key("google")
-    elif provider == "google" and not key:
-        key = get_api_key("gemini")
+    keys = get_api_keys(route.provider)
+    if provider == "gemini" and not keys:
+        keys = get_api_keys("google")
+    elif provider == "google" and not keys:
+        keys = get_api_keys("gemini")
+    key = keys[route.key_index] if route.key_index < len(keys) else (get_api_key(route.provider) if route.key_index == 0 else None)
 
     if provider in ("local", "llama", "llama-server", "ollama", "vllm"):
         local_base_url = route.base_url or "http://127.0.0.1:8080/v1"

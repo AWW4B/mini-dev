@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 
-from asf.config.secrets import get_api_key, key_sources  # noqa: F401
+from asf.config.secrets import get_api_key, get_api_keys, key_sources  # noqa: F401
 
 
 def test_get_api_key_from_env(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,3 +94,15 @@ def test_key_sources_reports_missing(fake_paths: Any, monkeypatch: pytest.Monkey
     sources = key_sources()
     # google should be missing (no env, no dotenv set for it)
     assert sources.get("google") in ("keyring", "missing")
+
+
+def test_get_api_keys_reads_numbered_and_comma_separated_keys(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Several keys for one provider: a comma separated main value plus numbered ones, in order, no duplicates, ending at a gap."""
+    monkeypatch.setattr("asf.config.secrets._keyring_get", lambda name: None)
+    monkeypatch.setenv("FACTORY_GROQ_API_KEY", "k1, k2")
+    monkeypatch.setenv("FACTORY_GROQ_API_KEY_2", "k3")
+    monkeypatch.setenv("FACTORY_GROQ_API_KEY_3", "k2")
+    monkeypatch.setenv("FACTORY_GROQ_API_KEY_5", "after-gap")
+    assert get_api_keys("groq") == ["k1", "k2", "k3"]
+    assert get_api_key("groq") == "k1"
+    assert get_api_keys("nobody") == []

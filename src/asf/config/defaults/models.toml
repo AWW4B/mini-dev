@@ -17,7 +17,7 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for this file.
 
-active_profile = "hybrid"
+active_profile = "free"
 
 [suggested_local_models]
 coder = ["Qwen3-Coder-30B-A3B-Instruct (GGUF Q4_K_M)", "Qwen2.5-Coder-14B-Instruct (GGUF Q4_K_M)"]
@@ -31,6 +31,16 @@ base_url = ""                # for ollama / external
 kv_cache_type = "q8_0"       # llama-server KV cache precision (half the fp16 size)
 flash_attn = true
 load_mode = "none"          # -lm: keeps weights out of system RAM once on the GPU (4.65 GB -> 0.78 GB measured)
+
+# free: local T1/T2 plus free-tier API keys only. T3 plans with Gemini and falls through to Groq; the reviewer starts on Groq
+# and falls through to Gemini. Store several keys per provider (FACTORY_GROQ_API_KEY, FACTORY_GROQ_API_KEY_2 ... or one
+# comma separated value): when a key hits its limit the next key is used, then the next provider. Create the keys in
+# projects with no billing so a call can never be charged.
+[profiles.free.roles]
+T1 = { provider = "local", model = "qwen3-1.7b", base_url = "http://127.0.0.1:8081/v1", params = { temperature = 0.1, extra_body = { chat_template_kwargs = { enable_thinking = false } } } }
+T2 = { provider = "local", model = "qwen2.5-coder-7b", base_url = "http://127.0.0.1:8082/v1", params = { temperature = 0.1 } }
+T3 = { provider = "gemini", fallbacks = ["groq"] }
+reviewer = { provider = "groq", fallbacks = ["gemini"] }
 
 [profiles.local-only.roles]
 T1 = { provider = "local", model = "qwen3-1.7b", base_url = "http://127.0.0.1:8081/v1", params = { temperature = 0.1, extra_body = { chat_template_kwargs = { enable_thinking = false } } } }
@@ -55,13 +65,28 @@ planner = "plan_then_verify"   # single_pass | self_critique | plan_then_verify
 worker = "tool_loop"           # tool_loop | whole_file_edit | diff_edit | code_exec
 self_critique_rounds = 2
 
+# Any OpenAI-compatible service works: add a [providers.<name>] table with its base_url and a default_model, store the key as
+# FACTORY_<NAME>_API_KEY (more as _2, _3 ...), then use the name as a role's provider or fallback. A role or fallback may
+# override the model: { provider = "groq", model = "..." }. Model names change often; check the provider's model list.
 [providers.openai]
 base_url = "https://api.openai.com/v1"
 [providers.groq]
 base_url = "https://api.groq.com/openai/v1"
-[providers.xai]
-base_url = "https://api.x.ai/v1"
+default_model = "openai/gpt-oss-20b"       # a 20B model on Groq
 [providers.gemini]
 base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+default_model = "gemini-2.5-flash"
+[providers.xai]
+base_url = "https://api.x.ai/v1"
+[providers.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+[providers.mistral]
+base_url = "https://api.mistral.ai/v1"
+[providers.cerebras]
+base_url = "https://api.cerebras.ai/v1"
+[providers.deepseek]
+base_url = "https://api.deepseek.com/v1"
+[providers.together]
+base_url = "https://api.together.xyz/v1"
 [providers.anthropic]
 extra = "anthropic"

@@ -4,6 +4,7 @@
 # OWNS: Test cases for src/asf/m5_shared/gateway/gateway.py
 # DOES NOT OWN: Production code; fixtures shared with other modules (put those in tests/conftest.py)
 # CONNECTS TO (external boundaries only):
+#   - imports from src/asf/contracts/models.py: ModelRole (role enum)
 #   - imports from src/asf/m5_shared/gateway/gateway.py: ModelGateway (unit under test)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
@@ -25,11 +26,19 @@ import pytest
 from langchain_core.runnables import Runnable, RunnableLambda
 from pydantic import BaseModel
 
+from asf.contracts.models import ModelRole
 from asf.m5_shared.gateway.gateway import ModelGateway
 
 
 class DummySchema(BaseModel):
     summary: str
+
+
+def _budget() -> Any:
+    return SimpleNamespace(
+        run_id="run-test", max_remote_tokens=10000, max_local_tokens=10000, max_api_spend=10.0, max_wall_clock_s=3600, max_task_nodes=20,
+        used_remote_tokens=0, used_local_tokens=0, used_api_spend=0.0, used_task_nodes=0, alert_fraction=0.8,
+    )
 
 
 def test_model_gateway_meets_contract(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -108,3 +117,24 @@ def test_a_role_can_point_at_its_own_local_server(monkeypatch: pytest.MonkeyPatc
     gw.model_for("T2", "code_step")  # type: ignore[arg-type]
     assert [(r.base_url, r.model) for r in seen] == [("http://127.0.0.1:8081/v1", "tiny"), ("http://127.0.0.1:8082/v1", "coder")]
     assert seen[0].params == {"temperature": 0.1}
+
+
+def test_every_stored_key_and_fallback_becomes_a_route_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Three Groq keys then a Gemini key give four routes: key 1, 2, 3 of the primary, then the fallback."""
+    keys = {"groq": ["g1", "g2", "g3"], "gemini": ["m1"]}
+    monkeypatch.setattr("asf.m5_shared.gateway.gateway.get_api_keys", lambda provider: keys.get(provider, []))
+    gateway = ModelGateway("free", _budget())
+    routes = gateway._routes_for(gateway.roles["reviewer"])
+    assert [(r.provider, r.key_index) for r in routes] == [("groq", 0), ("groq", 1), ("groq", 2), ("gemini", 0)]
+    assert routes[0].model == "openai/gpt-oss-20b"
+    assert routes[3].model == "gemini-2.5-flash"
+    assert routes[0].base_url == "https://api.groq.com/openai/v1"
+
+
+def test_a_missing_primary_key_falls_through_to_the_next_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no Groq key but a Gemini key the reviewer still gets a model instead of an error."""
+    keys = {"gemini": ["m1"]}
+    monkeypatch.setattr("asf.m5_shared.gateway.gateway.get_api_keys", lambda provider: keys.get(provider, []))
+    monkeypatch.setattr("asf.m5_shared.gateway.providers.get_api_keys", lambda provider: keys.get(provider, []))
+    monkeypatch.setattr("asf.m5_shared.gateway.providers.get_api_key", lambda provider: (keys.get(provider) or [""])[0] or None)
+    assert ModelGateway("free", _budget()).model_for(ModelRole.REVIEWER, "review") is not None

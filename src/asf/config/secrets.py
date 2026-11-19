@@ -5,7 +5,8 @@
 # DOES NOT OWN: Storing keys in TOML (forbidden)
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/config/paths.py: AppPaths, get_paths (cross-platform base directories)
-#   - called by src/asf/m5_shared/gateway/providers.py: get_api_key
+#   - called by src/asf/m5_shared/gateway/providers.py: get_api_key, get_api_keys
+#   - called by src/asf/m5_shared/gateway/gateway.py: get_api_keys (one route per key)
 #   - called by src/asf/doctor/checks.py: key_sources
 #   - called by tests/config/test_secrets.py: get_api_key, key_sources
 #   - emits/consumes: none
@@ -41,7 +42,10 @@ def _keyring_get(provider: str) -> str | None:
     return keyring.get_password(_KEYRING_SERVICE, provider)
 
 # Well-known providers that doctor checks by default
-_KNOWN_PROVIDERS = ("openai", "anthropic", "google")
+_KNOWN_PROVIDERS = ("openai", "anthropic", "google", "gemini", "groq", "xai", "openrouter", "mistral", "cerebras", "deepseek", "together")
+
+# one provider may have several keys (free tiers are rate limited per key): FACTORY_GROQ_API_KEY, then _2, _3 ... up to this many
+_MAX_KEYS = 16
 
 _KEYRING_SERVICE = "ai-software-factory"
 
@@ -76,34 +80,52 @@ def _load_dotenv(config_dir: Path) -> dict[str, str]:
     return result
 
 
-def get_api_key(provider: str) -> str | None:
-    """Return the API key for *provider*, or None if not found.
-
-    Search order: keyring → FACTORY_<PROVIDER>_API_KEY env → .env in config dir.
-    Never logs the key itself.
-    """
-    # 1. keyring
+def _lookup(name: str, env_name: str) -> str | None:
+    """One stored value: keyring entry *name*, then the environment variable, then the .env file. Never logs it."""
     try:
-        kr_val = _keyring_get(provider)
+        kr_val = _keyring_get(name)
         if kr_val:
             return kr_val
     except Exception as _kr_err:  # noqa: BLE001
-        _LOGGER.debug("keyring unavailable for %s: %s", provider, _kr_err)
-
-    # 2. environment variable
-    env_name = _env_key_name(provider)
+        _LOGGER.debug("keyring unavailable for %s: %s", name, _kr_err)
     env_val = os.environ.get(env_name)
     if env_val:
         return env_val
+    return _load_dotenv(get_paths().config_dir).get(env_name) or None
 
-    # 3. .env file in user config dir
-    paths = get_paths()
-    dotenv = _load_dotenv(paths.config_dir)
-    dotenv_val = dotenv.get(env_name)
-    if dotenv_val:
-        return dotenv_val
 
-    return None
+def get_api_keys(provider: str) -> list[str]:
+    """Every key stored for *provider*, in order, without duplicates.
+
+    The main entry may hold several keys separated by commas; further keys are FACTORY_<PROVIDER>_API_KEY_2, _3 ... (or the
+    keyring entries ``<provider>_2`` ...). The numbered list ends at the first gap. Never logs a key.
+    """
+    keys: list[str] = []
+
+    def add(raw: str | None) -> None:
+        for part in (raw or "").split(","):
+            part = part.strip()
+            if part and part not in keys:
+                keys.append(part)
+
+    base = _env_key_name(provider)
+    add(_lookup(provider, base))
+    for n in range(2, _MAX_KEYS + 1):
+        raw = _lookup(f"{provider}_{n}", f"{base}_{n}")
+        if not raw:
+            break
+        add(raw)
+    return keys
+
+
+def get_api_key(provider: str) -> str | None:
+    """Return the first API key for *provider*, or None if not found.
+
+    Search order: keyring → FACTORY_<PROVIDER>_API_KEY env → .env in config dir. A comma separated value yields its first key.
+    Never logs the key itself.
+    """
+    first = _lookup(provider, _env_key_name(provider))
+    return first.split(",")[0].strip() or None if first else None
 
 
 def key_sources() -> dict[str, str]:
