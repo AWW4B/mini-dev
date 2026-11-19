@@ -146,3 +146,28 @@ def test_external_backend_meets_contract(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr("asf.m5_shared.runtime.backends.httpx.Client", FakeClient)
     assert backend.healthy() is True
+
+
+def test_llama_server_backend_adds_only_the_flags_it_is_given(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Device-plan flags (GPU layers, threads, KV cache, flash attention, load mode) appear when set and not otherwise."""
+    launches: list[list[str]] = []
+
+    class FakePlatform:
+        @staticmethod
+        def detach(argv: list[str], log_path: Path) -> int:
+            launches.append(list(argv))
+            return 1
+
+    monkeypatch.setattr("asf.m5_shared.runtime.backends.get_platform", lambda: FakePlatform())
+    LlamaServerBackend(binary="fake-llama", models_dir=tmp_path).start("m.gguf", 4096, 1)
+    LlamaServerBackend(
+        binary="fake-llama", models_dir=tmp_path, gpu_layers=99, threads=4, kv_cache_type="q8_0", flash_attn=True, load_mode="none"
+    ).start("m.gguf", 4096, 1)
+
+    plain, tuned = launches
+    for flag in ("-ngl", "-t", "--cache-type-k", "--flash-attn", "-lm"):
+        assert flag not in plain
+        assert flag in tuned
+    assert tuned[tuned.index("-ngl") + 1] == "99"
+    assert tuned[tuned.index("-lm") + 1] == "none"
+    assert tuned[tuned.index("--cache-type-v") + 1] == "q8_0"

@@ -58,6 +58,11 @@ class LlamaServerBackend:
     host: str
     port: int
     models_dir: Path | None
+    gpu_layers: int | None
+    threads: int | None
+    kv_cache_type: str | None
+    flash_attn: bool
+    load_mode: str | None
     _pid: int | None
 
     def __init__(
@@ -66,15 +71,55 @@ class LlamaServerBackend:
         host: str = "127.0.0.1",
         port: int = 8080,
         models_dir: Path | None = None,
+        *,
+        gpu_layers: int | None = None,
+        threads: int | None = None,
+        kv_cache_type: str | None = None,
+        flash_attn: bool = False,
+        load_mode: str | None = None,
     ) -> None:
         self.binary = binary
         self.host = host
         self.port = port
         self.models_dir = models_dir
+        self.gpu_layers = gpu_layers
+        self.threads = threads
+        self.kv_cache_type = kv_cache_type
+        self.flash_attn = flash_attn
+        self.load_mode = load_mode
         self._pid = None
 
+    def _find_binary(self) -> str:
+        """Config first, then PATH, then a release unpacked under <data dir>/bin (where `factory` installs it)."""
+        if self.binary:
+            return self.binary
+        found = shutil.which("llama-server") or shutil.which("llama.cpp")
+        if found:
+            return found
+        bin_dir = get_paths().data_dir / "bin"
+        if bin_dir.is_dir():
+            for candidate in sorted(bin_dir.rglob("llama-server*"), reverse=True):
+                if candidate.is_file() and candidate.stem == "llama-server":
+                    return str(candidate)
+        return "llama-server"
+
+    def _tuning_args(self) -> list[str]:
+        """Optional launch flags from the device plan; an unset option adds nothing, so the defaults stay llama.cpp's."""
+        args: list[str] = []
+        if self.gpu_layers is not None:
+            args += ["-ngl", str(self.gpu_layers)]
+        if self.threads is not None:
+            args += ["-t", str(self.threads)]
+        if self.kv_cache_type:
+            args += ["--cache-type-k", self.kv_cache_type, "--cache-type-v", self.kv_cache_type]
+        if self.flash_attn:
+            args += ["--flash-attn", "on"]
+        if self.load_mode:  # "none" keeps the weights out of system RAM once they are on the GPU
+            args += ["-lm", self.load_mode]
+        return args
+
     def start(self, model_id: str, ctx_tokens: int, slots: int) -> str:
-        bin_path = self.binary or shutil.which("llama-server") or shutil.which("llama.cpp") or "llama-server"
+        bin_path = self._find_binary()
         mdir = self.models_dir or (get_paths().data_dir / "models")
         model_file = mdir / model_id
 
@@ -86,11 +131,13 @@ class LlamaServerBackend:
             str(ctx_tokens),
             "-np",
             str(slots),
+            *self._tuning_args(),
             "--host",
             self.host,
             "--port",
             str(self.port),
             "--metrics",
+            "--jinja",
         ]
 
         log_path = get_paths().log_dir / "llama-server.log"

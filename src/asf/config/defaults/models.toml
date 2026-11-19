@@ -25,19 +25,22 @@ tiny = ["Qwen3-1.7B (GGUF Q4_K_M, CPU ok)"]
 
 [runtime]
 backend = "llama-server"     # llama-server | ollama | external
-binary = ""                  # empty: found on PATH by doctor
+binary = ""                  # empty: PATH, then <data dir>/bin/**/llama-server
 models_dir = ""              # empty: <data dir>/models
 base_url = ""                # for ollama / external
+kv_cache_type = "q8_0"       # llama-server KV cache precision (half the fp16 size)
+flash_attn = true
+load_mode = "none"          # -lm: keeps weights out of system RAM once on the GPU (4.65 GB -> 0.78 GB measured)
 
 [profiles.local-only.roles]
-T1 = { provider = "local", model = "" }
-T2 = { provider = "local", model = "" }
+T1 = { provider = "local", model = "qwen3-1.7b", base_url = "http://127.0.0.1:8081/v1", params = { temperature = 0.1, extra_body = { chat_template_kwargs = { enable_thinking = false } } } }
+T2 = { provider = "local", model = "qwen2.5-coder-7b", base_url = "http://127.0.0.1:8082/v1", params = { temperature = 0.1 } }
 T3 = { provider = "local", model = "" }
 reviewer = { provider = "local", model = "" }
 
 [profiles.hybrid.roles]
-T1 = { provider = "local", model = "" }
-T2 = { provider = "local", model = "" }
+T1 = { provider = "local", model = "qwen3-1.7b", base_url = "http://127.0.0.1:8081/v1", params = { temperature = 0.1, extra_body = { chat_template_kwargs = { enable_thinking = false } } } }
+T2 = { provider = "local", model = "qwen2.5-coder-7b", base_url = "http://127.0.0.1:8082/v1", params = { temperature = 0.1 } }
 T3 = { provider = "openai", model = "", fallbacks = ["groq"] }
 reviewer = { provider = "openai", model = "" }
 
