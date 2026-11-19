@@ -5,6 +5,7 @@
 # DOES NOT OWN: Production code; fixtures shared with other modules (put those in tests/conftest.py)
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/m2_request/pipeline.py: build_request_graph (unit under test)
+#   - imports from src/asf/m5_shared/workspace/blobs.py: BlobStore (a blob-ref attachment)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -27,6 +28,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from asf.m2_request.pipeline import build_request_graph
+from asf.m5_shared.workspace.blobs import BlobStore
 
 
 def test_build_request_graph_meets_contract(tmp_path: Path) -> None:
@@ -190,3 +192,14 @@ def test_unsupported_repository_abort_raises(tmp_path: Path) -> None:
     with pytest.raises(Exception) as info:  # noqa: PT011
         graph.invoke(Command(resume="abort"), config)
     assert type(info.value).__name__ == "PolicyDenied"
+
+
+def test_a_blob_ref_attachment_is_read_and_its_text_becomes_the_requirements(fake_paths: Any) -> None:
+    """The CLI stores --file attachments as blob refs: the document text must reach the requirements, not an empty prompt."""
+    _ = fake_paths
+    ref = BlobStore().put(b"# wordfreq\nTop words of a text file.\nAcceptance: pytest passes.")
+    result = build_request_graph().invoke(_basic_input(prompt="", attachment_refs=[ref]))
+    structured = result["structured_request"]
+    assert any("Top words of a text file." in r.text for r in structured.requirements)
+    assert structured.acceptance == ["Acceptance: pytest passes."]
+    assert result["document_refs"]  # blobs are content-addressed: markdown identical to the attachment keeps its ref
