@@ -19,9 +19,10 @@
 
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableLambda
 from pydantic import BaseModel
 
 from asf.m5_shared.gateway.gateway import ModelGateway
@@ -86,3 +87,24 @@ def test_model_gateway_meets_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     exhausted_gw = ModelGateway("hybrid", exhausted_budget)  # type: ignore[arg-type]
     with pytest.raises(Exception, match="[Bb]udget"):
         exhausted_gw.model_for("T3", "planning")  # type: ignore[arg-type]
+
+
+def test_a_role_can_point_at_its_own_local_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Any] = []
+
+    def fake_build(route: Any) -> Any:
+        seen.append(route)
+        return RunnableLambda(lambda x: x)
+
+    monkeypatch.setattr("asf.m5_shared.gateway.gateway.build_chat_model", fake_build)
+    budget = SimpleNamespace(
+        run_id="r", max_remote_tokens=10**6, max_local_tokens=10**6, max_api_spend=10.0, max_wall_clock_s=3600, max_task_nodes=20,
+        used_remote_tokens=0, used_local_tokens=0, used_api_spend=0.0, used_task_nodes=0, alert_fraction=0.8,
+    )
+    gw = ModelGateway("local-only", budget)  # type: ignore[arg-type]
+    gw.roles["T1"] = {"provider": "local", "model": "tiny", "base_url": "http://127.0.0.1:8081/v1", "params": {"temperature": 0.1}}
+    gw.roles["T2"] = {"provider": "local", "model": "coder", "base_url": "http://127.0.0.1:8082/v1"}
+    gw.model_for("T1", "rubric")  # type: ignore[arg-type]
+    gw.model_for("T2", "code_step")  # type: ignore[arg-type]
+    assert [(r.base_url, r.model) for r in seen] == [("http://127.0.0.1:8081/v1", "tiny"), ("http://127.0.0.1:8082/v1", "coder")]
+    assert seen[0].params == {"temperature": 0.1}
