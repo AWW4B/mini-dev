@@ -9,6 +9,7 @@
 #   - imports from src/asf/contracts/errors.py: PolicyDenied (the requester aborted)
 #   - imports from src/asf/contracts/events.py: EventEnvelope, EventKind (narrative events)
 #   - imports from src/asf/m2_request/repository_intake.py: intake_repository (step)
+#   - imports from src/asf/m5_shared/workspace/blobs.py: BlobStore (attachments arrive as blob refs; their text is read back here)
 #   - imports from src/asf/m2_request/prompt_normalisation.py: normalise_prompt (step)
 #   - imports from src/asf/m2_request/request_understanding.py: understand_request (step)
 #   - called by src/asf/m2_request/intake_router.py: build_request_graph
@@ -29,6 +30,7 @@
 import logging
 import operator
 import sqlite3
+import tempfile
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -46,6 +48,7 @@ from asf.m2_request.document_ingestion import DocumentNotIngestible, ingest_docu
 from asf.m2_request.prompt_normalisation import normalise_prompt
 from asf.m2_request.repository_intake import intake_repository
 from asf.m2_request.request_understanding import understand_request
+from asf.m5_shared.workspace.blobs import BlobStore
 
 logger = logging.getLogger(__name__)
 
@@ -179,16 +182,23 @@ def _ask_requester(state: PipelineState, request: DecisionRequest) -> str | None
     return str(answer)
 
 
-def _step_ingest_docs(state: PipelineState) -> dict[str, Any]:
-    document_refs: list[str] = []
-    ingested_docs: list[Any] = []
-    request_id = state.get("request_id", "")
+def _attachment_suffix(data: bytes) -> str:
+    """The extractor picks its reader from the file type, and a blob has no name: tell the common formats apart by their first bytes."""
+    if data.startswith(b"%PDF"):
+        return ".pdf"
+    if data.startswith(b"PK"):
+        return ".docx"
+    return ".md"
 
-    for position, ref in enumerate(state.get("attachment_refs", [])):
-        path = Path(str(ref))
+
+def _ingest_attachment(state: PipelineState, ref: str, position: int, request_id: str) -> tuple[Any, str, str] | None:
+    """Ingest one attachment (a local path or a blob ref); return (document, markdown_ref, text), or None when the requester skipped it."""
+    path = Path(ref)
+    blobs = BlobStore()
+    with tempfile.TemporaryDirectory() as scratch:
         if not path.is_file():
-            document_refs.append(str(ref))  # not a local file (for example a blob ref): pass it through untouched
-            continue
+            path = Path(scratch) / ("attachment" + _attachment_suffix(blobs.get(ref)))
+            path.write_bytes(blobs.get(ref))
         try:
             doc, markdown_ref = _run_task(_task_ingest_document, str(path))
         except DocumentNotIngestible as err:
@@ -196,9 +206,32 @@ def _step_ingest_docs(state: PipelineState) -> dict[str, Any]:
             if answer != "skip_document":
                 raise
             logger.warning("skipping document %s at the requester's request: %s", path.name, err.reason)
+            return None
+    return doc, markdown_ref, blobs.get(markdown_ref).decode("utf-8", errors="replace")
+
+
+def _step_ingest_docs(state: PipelineState) -> dict[str, Any]:
+    document_refs: list[str] = []
+    ingested_docs: list[Any] = []
+    texts: list[str] = []
+    request_id = state.get("request_id", "")
+
+    for position, ref in enumerate(state.get("attachment_refs", [])):
+        ref_str = str(ref)
+        if not Path(ref_str).is_file() and not ref_str.startswith("sha256:"):
+            document_refs.append(ref_str)  # neither a local file nor a blob ref: pass it through untouched
             continue
-        ingested_docs.append(doc)
-        document_refs.append(markdown_ref)
+        try:
+            done = _ingest_attachment(state, ref_str, position, request_id)
+        except FileNotFoundError:
+            logger.warning("attachment %s is not in the blob store; it is passed through unread", ref_str)
+            document_refs.append(ref_str)
+            continue
+        if done is None:
+            continue
+        ingested_docs.append(done[0])
+        document_refs.append(done[1])
+        texts.append(done[2])
 
     events = _narrative_event(
         state, EventKind.TASK_RECEIVED, "task_received", {"goal_summary": str(state.get("prompt", ""))[:200], "from_role": "user"}
@@ -209,7 +242,10 @@ def _step_ingest_docs(state: PipelineState) -> dict[str, Any]:
         {"step_no": 1, "strategy": "document_ingestion", "summary": f"{len(document_refs)} attachment(s)"},
         caused_by="task_received",
     )
-    return {"ingested_documents": ingested_docs, "document_refs": document_refs, "events": events}
+    update: dict[str, Any] = {"ingested_documents": ingested_docs, "document_refs": document_refs, "events": events}
+    if texts:  # the documents are the request: their text joins the prompt that is normalised and turned into requirements
+        update["prompt"] = "\n\n".join([part for part in (str(state.get("prompt", "")).strip(), *texts) if part])
+    return update
 
 
 def _step_intake_repo(state: PipelineState) -> dict[str, Any]:

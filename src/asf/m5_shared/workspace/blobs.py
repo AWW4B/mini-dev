@@ -23,6 +23,8 @@
 #   - called by tests/web/test_server.py: BlobStore
 #   - called by tests/m3_orchestration/test_e2e.py: BlobStore
 #   - called by src/asf/m5_shared/memory/tool_outputs.py: BlobStore
+#   - called by src/asf/m2_request/pipeline.py: BlobStore (attachments are read back from the blob store)
+#   - called by tests/m2_request/test_pipeline.py: BlobStore
 #   - called by tests/m5_shared/memory/test_tool_outputs.py: BlobStore
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
