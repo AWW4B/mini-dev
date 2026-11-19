@@ -153,7 +153,13 @@ class ModelGateway:
         model_name = str(role_cfg.get("model", "")) or ("gpt-4o" if provider == "openai" else "default")
         fallbacks = list(role_cfg.get("fallbacks", []))
 
-        route = RouteConfig(provider=provider, model=model_name)
+        route = RouteConfig(
+            provider=provider,
+            model=model_name,
+            base_url=str(role_cfg["base_url"]) if role_cfg.get("base_url") else None,  # a role may point at its own server (two local models)
+            params=dict(role_cfg.get("params", {})),
+            reasoning_effort=str(role_cfg["reasoning_effort"]) if role_cfg.get("reasoning_effort") else None,
+        )
         try:
             base_model = build_chat_model(route)
         except Exception as err:
