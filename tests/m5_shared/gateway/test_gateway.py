@@ -135,4 +135,4 @@ def test_a_missing_primary_key_falls_through_to_the_next_provider(monkeypatch: p
     monkeypatch.setattr("asf.m5_shared.gateway.gateway.get_api_keys", lambda provider: keys.get(provider, []))
     monkeypatch.setattr("asf.m5_shared.gateway.providers.get_api_keys", lambda provider: keys.get(provider, []))
     monkeypatch.setattr("asf.m5_shared.gateway.providers.get_api_key", lambda provider: (keys.get(provider) or [""])[0] or None)
-    assert ModelGateway("free", _budget()).model_for("reviewer", "review")  # type: ignore[arg-type] is not None
+    assert ModelGateway("free", _budget()).model_for("reviewer", "review") is not None  # type: ignore[arg-type]
