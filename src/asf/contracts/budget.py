@@ -12,6 +12,7 @@
 #   - called by src/asf/cli/commands/models.py: RunBudget
 #   - called by src/asf/cli/commands/run.py: RunBudget
 #   - called by src/asf/m3_orchestration/autonomy.py: RunBudget
+#   - called by src/asf/m3_orchestration/supervisor.py: RunBudget
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.

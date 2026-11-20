@@ -167,7 +167,7 @@ def drive(project_root: Path, spec_file: str, mode: str, profile: str, *, decide
             _record(project_root, {"decision": "(run)", "by": "driver", "reason": "nothing changed in a full cycle; stopped and reported"})
             break
     report, archive = write_delivery(project_root)
-    write_supervisor_notes(project_root)
+    write_supervisor_notes(project_root, profile=profile)
     return report, archive
 
 
