@@ -152,6 +152,7 @@ def _say(run_id: str, role: str, kind: str, payload: dict[str, Any], task_id: st
                 {"entity": "run", "entity_id": run_id, "expected_version": int(row["version"]), "mutation": {"status": row["status"]}, "events": [event]}
             )
         )
+        _relay()  # so the viewer sees the line now, not when the monitor next ticks
         return str(event["event_id"])
     except Exception:  # noqa: BLE001 - the story is an aid; the run goes on without a line of it
         logger.warning("could not record a %s narrative event", kind, exc_info=True)
