@@ -175,6 +175,13 @@ def _step(engine: _Engine, node: TaskNode, resplit_evidence: str | None) -> tupl
         node = transition(node, TaskState.SPLITTING, "too big")
         feedback = ""
     else:
+        size = node.size_estimate if node.size_estimate is not None else estimate_size(node, engine.context_tokens(node))
+        if _is_trivial(node, size, engine.profile):
+            # it failed on every attempt, the bigger helper models included; cutting something this small only produced children that were
+            # rejected as 'not smaller enough' (a real run spent dozens of planner calls that way). The failure is accepted and reported.
+            trace_event("decompose", "resplit_skipped", task=str(node.id), size=size, why="too small to split; failed with every model")
+            engine.ask(node, "escalation", f"Task '{node.goal}' failed on every attempt, including the bigger models, and is too small to split. It is abandoned and reported.", ["abandon_subtree", "abort_run"])
+            return leaves, [str(node.id)], created
         node = transition(node, TaskState.SPLITTING, "re-split after an execution failure")
         feedback = f"The previous attempt at this task failed because it was too large. Evidence:\n{resplit_evidence}"
 

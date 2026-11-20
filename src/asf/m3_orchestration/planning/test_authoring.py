@@ -13,6 +13,7 @@
 #   - called by src/asf/m3_orchestration/decomposition/leaf_certifier.py: author_acceptance_tests
 #   - called by tests/m3_orchestration/planning/test_test_authoring.py: author_acceptance_tests
 #   - called by src/asf/m3_orchestration/run_graph.py: author_acceptance_tests
+#   - imports from src/asf/m5_shared/stack.py: find_stack, stack_prompt (tests use the project's stack)
 #   - emits/consumes: raises DecisionRequest kind APPROVE_LOCAL_TESTS when the per-run switch is on and T3 is unavailable
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -38,6 +39,7 @@ from asf.contracts.errors import ApprovalRequired, BudgetExceeded, InvalidModelO
 from asf.contracts.tasks import TaskNode
 from asf.m5_shared.decisions.broker import DecisionBroker
 from asf.m5_shared.gateway.gateway import ModelGateway
+from asf.m5_shared.stack import find_stack, stack_prompt
 from asf.m5_shared.tools.skills import SkillsRegistry
 
 logger = logging.getLogger(__name__)
@@ -244,6 +246,8 @@ def author_acceptance_tests(
     if node.allowed_files and not any(_is_code_module(f) for f in node.allowed_files):
         _ensure_conftest(project_root)
         return _file_presence_test(node, project_root)
+    stack = stack_prompt(find_stack(project_root))
+    context = f"{stack}\n{context}" if stack else context
     prompt = _PROMPT.format(
         goal=node.goal,
         criteria="; ".join(node.acceptance_refs) or "(derive them from the goal)",

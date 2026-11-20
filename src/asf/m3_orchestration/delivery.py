@@ -22,8 +22,10 @@
 # DONE WHEN: (1) tests/m3_orchestration/test_delivery.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m3_orchestration/delivery.py` and `uv run mypy src/asf/m3_orchestration/delivery.py` are clean.
 
 import json
+import re
 import sqlite3
 import zipfile
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -55,9 +57,25 @@ def _trace(project_root: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _facts(task_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """What the trace says about one task: attempts, helper use, the coder's last words, why a split failed."""
-    facts: dict[str, Any] = {"attempts": 0, "helper": False, "messages": [], "failures": [], "split_problems": []}
+_FAILED_TEST = re.compile(r"^(?:FAILED (\S+?)(?: - .*)?|_{3,} (test_\w+) _{3,})$", re.M)
+
+
+def _failed_tests(project_root: Path | None, detail: str) -> list[str]:
+    """The tests that failed in one attempt, read from its evidence blob (<project>/.asf_blobs/<aa>/<rest>)."""
+    match = re.search(r"sha256:([0-9a-f]{64})", detail)
+    if project_root is None or match is None:
+        return []
+    digest = match.group(1)
+    blob = project_root / ".asf_blobs" / digest[:2] / digest[2:]
+    if not blob.is_file():
+        return []
+    text = blob.read_text(encoding="utf-8", errors="replace")
+    return sorted({(a or b).split("::")[-1] for a, b in _FAILED_TEST.findall(text)})
+
+
+def _facts(task_id: str, rows: list[dict[str, Any]], project_root: Path | None = None) -> dict[str, Any]:
+    """What the trace says about one task: attempts, helper use, the coder's last words, why a split failed, which tests kept failing."""
+    facts: dict[str, Any] = {"attempts": 0, "helper": False, "messages": [], "failures": [], "split_problems": [], "failed_tests": Counter()}
     for row in rows:
         data = row.get("data") or {}
         event = row.get("event")
@@ -71,6 +89,7 @@ def _facts(task_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
             facts["messages"].append(f"{data.get('action')}: {str(data.get('message'))[:200]}")
         elif event == "attempt_end" and data.get("result") != "verified":
             facts["failures"].append(str(data.get("detail") or data.get("result"))[:200])
+            facts["failed_tests"].update(_failed_tests(project_root, str(data.get("detail") or "")))
         elif event == "split_proposed" and data.get("problems"):
             facts["split_problems"] = [str(p)[:160] for p in data["problems"]]
     return facts
@@ -79,6 +98,16 @@ def _facts(task_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
 def _diagnosis(facts: dict[str, Any]) -> tuple[str, str]:
     """(cause, probable fix) from the evidence; a rule table, not a guess by a model."""
     text = " ".join([*facts["messages"], *facts["failures"], *facts["split_problems"]]).lower()
+    repeated = [name for name, n in facts["failed_tests"].most_common() if n >= 2]
+    if facts["helper"] and repeated:
+        # CodeT's idea (code and tests checked against each other): when different models keep failing the same test, suspect the test
+        return (
+            f"Different models (the local coder and the bigger helpers) failed the same test(s) {', '.join(repeated[:3])} on every attempt: "
+            "the test is suspect, it may demand something the spec does not say.",
+            "Compare those tests with the spec's own words; re-author or delete the ones that go beyond it, then rerun the task.",
+        )
+    if facts["attempts"] == 0 and not facts["split_problems"]:
+        return ("The task never ran: it waited for a task it depends on, which failed or was abandoned.", "Fix the task it depends on (listed above); this one then runs.")
     if "not smaller enough" in text:
         return ("The task was too small to split further but the split rule demanded children under 80% of its size.", "Let a task at or below leaf size be accepted as it is; do not propose splits for it.")
     if "owned by both" in text or "outside the parent" in text:
@@ -98,7 +127,7 @@ def diagnose_project(project_root: Path) -> list[tuple[str, str, str, str]]:
     found = []
     for task_id, state, _title in _tasks(project_root):
         if state not in _GOOD:
-            cause, fix = _diagnosis(_facts(task_id, rows))
+            cause, fix = _diagnosis(_facts(task_id, rows, project_root))
             found.append((task_id, state, cause, fix))
     return found
 
@@ -140,7 +169,7 @@ def build_report(project_root: Path) -> str:
     lines = ["# Delivery report", "", f"Run status: **{status}**", "", "## Tasks", "", "| task | state | attempts | bigger model used |", "|---|---|---|---|"]
     problems: list[tuple[str, str, dict[str, Any]]] = []
     for task_id, state, _title in tasks:
-        facts = _facts(task_id, rows)
+        facts = _facts(task_id, rows, project_root)
         lines.append(f"| {task_id} | {state} | {facts['attempts']} | {'yes' if facts['helper'] else 'no'} |")
         if state not in _GOOD:
             problems.append((task_id, state, facts))
@@ -173,7 +202,7 @@ def write_delivery(project_root: Path) -> tuple[Path, Path]:
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
         for path in sorted(project_root.rglob("*")):
             rel = path.relative_to(project_root)
-            if not path.is_file() or path.name in _SKIP_FILES or path.suffix == ".pyc" or path.name.startswith("AUTOPILOT") or any(part in _SKIP_DIRS for part in rel.parts):
+            if not path.is_file() or path.name in _SKIP_FILES or path.suffix == ".pyc" or path.name.lower().startswith("autopilot") or path.suffix == ".log" or any(part in _SKIP_DIRS for part in rel.parts):
                 continue
             bundle.write(path, rel.as_posix())
         bundle.write(report, "REPORT.md")

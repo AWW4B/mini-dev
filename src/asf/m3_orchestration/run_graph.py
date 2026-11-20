@@ -43,6 +43,7 @@
 #   - called by tests/m3_orchestration/test_e2e.py: start_run
 #   - imports from src/asf/m5_shared/trace.py: start_trace, trace_event (the run's flight recorder starts here)
 #   - imports from src/asf/m5_shared/gateway/usage_callback.py: drain_call_metrics (model calls queued by any thread are written to call_metrics here)
+#   - imports from src/asf/m5_shared/stack.py: derive_stack, save_stack (the project's tech stack, written at run creation)
 #   - emits/consumes: emits RUN_STARTED, RUN_COMPLETED, emits narrative events TASK_RECEIVED, STEP_STARTED, HANDOFF_SENT, HANDOFF_RECEIVED, GATE_RESULT, DECISION_NEEDED (with causation_id set to the triggering event) via StateStore.commit
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -89,6 +90,7 @@ from asf.m3_orchestration.run_control import RunSupervisor
 from asf.m5_shared.decisions.broker import DecisionBroker
 from asf.m5_shared.events.event_log import EventLog
 from asf.m5_shared.registry.registry import ContractRegistry
+from asf.m5_shared.stack import derive_stack, save_stack
 from asf.m5_shared.state_store.outbox import OutboxRelay
 from asf.m5_shared.state_store.store import StateStore
 from asf.m5_shared.trace import start_trace, trace_event
@@ -237,6 +239,11 @@ def _node_create_run(state: RunState) -> dict[str, Any]:
     store: StateStore = _dep("state_store")
     run_id = state["run_id"]
     request = StructuredRequest.model_validate(state["request"])
+    if state.get("project_root"):  # one tech stack for the whole project, decided by code from the spec before any agent works
+        save_stack(Path(state["project_root"]), derive_stack("\n".join(r.text for r in request.requirements)))
+        # the spec's own words per requirement id: the test author is shown them so a test cannot demand what the spec never said
+        spec_file = Path(state["project_root"]) / ".factory" / "requirements.json"
+        spec_file.write_text(json.dumps({r.req_id: r.text for r in request.requirements}, indent=1), encoding="utf-8")
     if store.conn.execute("SELECT 1 FROM runs WHERE run_id = ?", (run_id,)).fetchone() is None:  # idempotent on resume
         budget: RunBudget = _dep("budget") or _default_budget(run_id)
         store.commit(
@@ -636,6 +643,24 @@ def default_components(project_root: Path, run_id: str, overrides: dict[str, Any
     return components
 
 
+def _spec_words(project_root: Path, node: Any) -> str:
+    """The spec's literal text for every requirement id the node covers (or all of it when it names none), with the rule that it wins.
+
+    A real run's test author demanded `foo:` style output and leading-alphanumeric words although the spec said `word count` lines and
+    letters-or-apostrophe words; no coder, small or large, could pass those tests."""
+    path = project_root / ".factory" / "requirements.json"
+    if not path.is_file():
+        return ""
+    texts: dict[str, str] = json.loads(path.read_text(encoding="utf-8"))
+    refs = " ".join(str(r) for r in node.acceptance_refs)
+    chosen = {rid: text for rid, text in texts.items() if rid in refs} or texts
+    lines = "\n".join(f"- {rid}: {text}" for rid, text in chosen.items())
+    return (
+        "\nTHE SPEC'S OWN WORDS (they win over any criterion above; test exactly what they say and invent no format, rule or edge case "
+        f"they do not state):\n{lines}\n"
+    )
+
+
 def _build_execution(components: dict[str, Any], project_root: Path, run_id: str, overrides: dict[str, Any]) -> None:
     """The composition root for execution: runtime, workspace, tools, scheduler and the attempt runner (worker + gate)."""
     from asf.m4_execution.scheduler import TaskScheduler
@@ -688,6 +713,7 @@ def _build_execution(components: dict[str, Any], project_root: Path, run_id: str
             pinned = {ref.partition("@")[0]: ref.partition("@")[2] for ref in node.contract_refs if "@" in ref}
             capsules = registry.query(ContractQuery(module_ids=modules, pinned_versions=pinned))
             context = "PINNED CONTRACTS (the exact names and signatures the tests must use):\n" + "\n".join(f"- {c.module_id}.{c.operation}: " + " ".join(c.lines) for c in capsules)
+        context += _spec_words(project_root, node)
         paths = author_acceptance_tests(
             node, bool(overrides.get("allow_local_tests")), gateway=gateway, project_root=project_root, broker=components["decision_broker"], context=context
         )

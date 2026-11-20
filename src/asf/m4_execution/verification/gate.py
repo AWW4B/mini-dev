@@ -17,6 +17,7 @@
 #   - called by src/asf/m4_execution/worker/worker_graph.py: verify_change_set
 #   - called by tests/m4_execution/verification/test_gate.py: verify_change_set, scan_diff
 #   - called by src/asf/m3_orchestration/run_graph.py: verify_change_set, run_in_sandbox
+#   - imports from src/asf/m5_shared/stack.py: find_stack, foreign_imports, stack_prompt (imports outside the project's stack fail the scope check)
 #   - emits/consumes: emits GATE_RESULT (gate, passed, summary, evidence_ref) per gate, HANDOFF_SENT (gate -> scheduler on requeue), STATE_CHANGED VERIFIED
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -46,6 +47,7 @@ from asf.m4_execution.verification.failure_classifier import classify_failure
 from asf.m4_execution.verification.reviewer import review_change
 from asf.m4_execution.verification.test_selection import select_tests
 from asf.m5_shared.registry.registry import ContractRegistry
+from asf.m5_shared.stack import find_stack, foreign_imports, stack_prompt
 from asf.m5_shared.workspace.workspace import Workspace
 from asf.platform.base import ProcessResult, SandboxSpec
 from asf.platform.select import get_platform
@@ -171,6 +173,13 @@ def verify_change_set(
         diff_text = ""
         violations.append(f"the diff {change.diff_ref} is missing, so the change cannot be checked")
     violations += scan_diff(diff_text)
+    contract = find_stack(Path(worktree))
+    if contract is not None:
+        own = {p.name for p in (Path(worktree) / "src").glob("*") if p.is_dir()} | {p.stem for p in Path(worktree).glob("*.py")} | {"tests", "conftest", "src"}
+        for rel in (f for f in change.files_touched if f.endswith(".py") and (Path(worktree) / f).is_file()):
+            bad = foreign_imports((Path(worktree) / rel).read_text(encoding="utf-8", errors="replace"), contract, own, is_test=_is_test_path(rel))
+            if bad:
+                violations.append(f"{rel} imports {', '.join(bad)}, which the project's tech stack does not allow ({stack_prompt(contract)})")
     if violations:
         text = "Policy violation:\n- " + "\n- ".join(violations)
         publish("scope", False, "; ".join(violations))
