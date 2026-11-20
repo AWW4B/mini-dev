@@ -34,7 +34,7 @@ _VAGUE = re.compile(r"\b(etc|and so on|somehow|as needed|appropriate(ly)?|tbd|ma
 
 # A tiny model's ambiguity score may raise the heuristic one by at most this much: a 1.7B model once rated a precise one-file
 # task 1.0 and stalled a whole run on a clarification question. The heuristics see the acceptance criteria and the file list.
-MODEL_MARGIN = 0.4
+MODEL_MARGIN = 0.25  # heuristic 0.4 (a short goal) + 0.25 = 0.65 stays under the leaf limit of 0.7; at 0.4 a four word README task was split
 COUPLING_MARGIN = 0.2  # coupling decides leaf versus split directly (limit 0.7), so the model gets less room: a 1.7B model rated every task 0.8 to 0.95
 
 
