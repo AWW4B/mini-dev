@@ -183,7 +183,9 @@ def verify_change_set(
     commands: list[tuple[str, list[str]]] = []
     if python_files:
         commands.append(("lint", ["uv", "run", "ruff", "check", *python_files]))
-        commands.append(("types", ["uv", "run", "mypy", *python_files]))
+        # a generated project has no mypy config and often no __init__.py: without these flags a module importing its sibling failed with
+        # "Cannot find implementation or library stub" and the attempt was sent back as a LOCAL_BUG forever
+        commands.append(("types", ["uv", "run", "mypy", "--ignore-missing-imports", "--follow-imports=silent", *python_files]))
     selected = select_tests(change, acceptance_refs or [])
     if selected:
         commands.append(("tests", ["uv", "run", "pytest", "-q", "--no-header", *selected]))

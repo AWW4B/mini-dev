@@ -222,3 +222,13 @@ def test_unrisky_changes_skip_the_reviewer(tmp_path: Path) -> None:
 )
 def test_scan_diff(diff: str, expected: list[str]) -> None:
     assert scan_diff(diff) == expected
+
+
+def test_the_type_check_tolerates_imports_it_cannot_resolve_in_a_generated_layout() -> None:
+    """mypy on src/pkg/cli.py failed on `import pkg.core` in a project without __init__.py or a mypy config, so every attempt was a LOCAL_BUG."""
+    import inspect
+
+    from asf.m4_execution.verification import gate
+
+    source = inspect.getsource(gate)
+    assert '"mypy", "--ignore-missing-imports"' in source
