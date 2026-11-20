@@ -295,6 +295,10 @@ class TaskScheduler:
                 text = str(err)
                 failure = "SPEC_TOO_LARGE" if "SPEC_TOO_LARGE" in text else "CONTEXT_OVERFLOW" if "CONTEXT_OVERFLOW" in text else "CONTRACT_GAP"
                 result = self._outcome(task_id, failure, text, attempt_no)
+                if failure == "CONTRACT_GAP" and attempt_no < spec.max_attempts:
+                    # a coder that gave up is not a contract gap yet: the next attempt is made by a bigger model (the help ladder), and only a
+                    # block that survives every attempt is escalated; before, one 'blocked' ended the task with the ladder never used
+                    result = Requeue.model_validate({"task_id": task_id, "failure_class": "LOCAL_BUG", "evidence_ref": text[:2000]})
             else:
                 logger.warning("attempt %d of task %s failed for an infrastructure reason", attempt_no, task_id, exc_info=True)
                 infra_failure = f"{name}: {err}"
