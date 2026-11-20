@@ -166,7 +166,7 @@ def _step(engine: _Engine, node: TaskNode, resplit_evidence: str | None) -> tupl
                 node, engine.base_commit, engine.parent_branch, registry=engine.registry, authoring=engine.authoring
             )
             trace_event("decompose", "leaf", task=str(node.id), tests=list(spec.acceptance_test_refs), capsules=len(spec.capsules))
-            node = transition(node, TaskState.LEAF_CERTIFIED, "fits the leaf profile").model_copy(update={"kind": "leaf"})
+            node = transition(node, TaskState.LEAF_CERTIFIED, "fits the leaf profile").model_copy(update={"kind": type(node.kind)("leaf")})
             frontier.update(node)
             if engine.scheduler is not None:
                 engine.scheduler.enqueue(spec)
@@ -211,7 +211,7 @@ def _force_leaf(engine: _Engine, node: TaskNode, why: str) -> str:
     node = transition(node, TaskState.SIZING, why)
     spec = certify_leaf(node, engine.base_commit, engine.parent_branch, registry=engine.registry, authoring=engine.authoring)
     trace_event("decompose", "forced_leaf", task=str(node.id), why=why, tests=list(spec.acceptance_test_refs), capsules=len(spec.capsules))
-    node = transition(node, TaskState.LEAF_CERTIFIED, why).model_copy(update={"kind": "leaf"})
+    node = transition(node, TaskState.LEAF_CERTIFIED, why).model_copy(update={"kind": type(node.kind)("leaf")})
     engine.frontier.update(node)
     if engine.scheduler is not None:
         engine.scheduler.enqueue(spec)
