@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 _VAGUE = re.compile(r"\b(etc|and so on|somehow|as needed|appropriate(ly)?|tbd|maybe|something like|various|and more)\b", re.I)
 
 
+# A tiny model's ambiguity score may raise the heuristic one by at most this much: a 1.7B model once rated a precise one-file
+# task 1.0 and stalled a whole run on a clarification question. The heuristics see the acceptance criteria and the file list.
+MODEL_MARGIN = 0.4
+
+
 class RubricScore(BaseModel):
     ambiguity: float
     coupling: float
@@ -79,4 +84,7 @@ def score_node(node: TaskNode, *, gateway: ModelGateway | None = None) -> Rubric
     except Exception:  # noqa: BLE001 - provider errors vary; the rubric is advisory
         logger.warning("the rubric model is unavailable; using the deterministic rubric", exc_info=True)
         return _deterministic(node)
-    return RubricScore(ambiguity=_clamp(score.ambiguity), coupling=_clamp(score.coupling), notes=score.notes)
+    heuristic = _deterministic(node)
+    ambiguity = min(_clamp(score.ambiguity), heuristic.ambiguity + MODEL_MARGIN)
+    coupling = min(_clamp(score.coupling), heuristic.coupling + MODEL_MARGIN)
+    return RubricScore(ambiguity=ambiguity, coupling=coupling, notes=score.notes)
