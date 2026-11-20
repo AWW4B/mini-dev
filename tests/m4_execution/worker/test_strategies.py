@@ -264,7 +264,7 @@ def test_blocked_after_a_failing_test_run_is_pushed_back_to_fix_the_code(tmp_pat
         {"action": "done", "message": "fixed"},
     )
     assert "fixed" in _run("tool_loop", gateway, _Failing(), tmp_path, _spec(max_turns=8, tests=("tests/test_billing.py",)))
-    assert "the acceptance tests failed: read the failure output above" in gateway.prompts[3]
+    assert "the acceptance tests failed. Failure output:" in gateway.prompts[3] and "FAILED tests/test_billing.py::test_a" in gateway.prompts[3]
 
 
 def test_the_source_of_modules_already_in_the_worktree_is_shown_to_the_worker(tmp_path: Path) -> None:
