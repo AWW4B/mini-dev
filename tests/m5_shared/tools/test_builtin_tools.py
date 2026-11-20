@@ -117,3 +117,14 @@ def test_register_builtin_tools_meets_contract() -> None:
     assert "search_code" in registered
     assert "run_tests" in registered
     assert "run_linter" in registered
+
+
+def test_the_local_coder_may_run_tests_and_the_linter() -> None:
+    """The worker prompt tells the T2 coder to call run_tests and run_linter; the registry denied both for role T2 (found in the first trace)."""
+    from asf.m5_shared.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    for name in ("run_tests", "run_linter", "read_file", "write_file", "search_code"):
+        spec, _ = registry.get(name)
+        assert "T2" in spec.roles or "*" in spec.roles, name
