@@ -105,3 +105,18 @@ def test_local_runtime_meets_contract() -> None:
     low_vram_runtime = LocalRuntime(backend=backend, probe=low_vram_probe, max_slots=1)  # type: ignore[arg-type]
     with pytest.raises(Exception, match="RESOURCE_UNAVAILABLE"):
         low_vram_runtime.acquire(req)  # type: ignore[arg-type]
+
+
+def test_a_runtime_without_a_backend_does_not_demand_free_vram() -> None:
+    """With the model servers already running (no backend) they hold the VRAM: the check refused every attempt with '159 MB free'."""
+    from types import SimpleNamespace
+
+    from asf.m5_shared.runtime.local_runtime import LocalRuntime
+
+    class _Probe:
+        def read(self) -> SimpleNamespace:
+            return SimpleNamespace(vram_free_mb=100, ram_free_mb=8000)
+
+    runtime = LocalRuntime(probe=_Probe(), max_slots=1)  # type: ignore[arg-type]
+    request = SimpleNamespace(model_id="T2", ctx_tokens=8192, ttl_s=60, priority=0)
+    assert runtime.acquire(request) is not None  # type: ignore[arg-type]
