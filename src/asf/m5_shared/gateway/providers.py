@@ -5,6 +5,7 @@
 # DOES NOT OWN: Budgets, fallbacks and retries (gateway.py)
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/config/secrets.py: get_api_key, get_api_keys (D-38 keys)
+#   - imports from src/asf/m5_shared/gateway/dummy.py: DummyChatModel (provider "dummy": the whole flow without a real model)
 #   - called by src/asf/m5_shared/gateway/gateway.py: RouteConfig, build_chat_model
 #   - called by tests/m5_shared/gateway/test_providers.py: RouteConfig, build_chat_model
 #   - emits/consumes: none
@@ -24,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, SecretStr
 
 from asf.config.secrets import get_api_key, get_api_keys
+from asf.m5_shared.gateway.dummy import DummyChatModel
 
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
@@ -35,6 +37,8 @@ class RouteConfig(BaseModel):
     base_url: str | None = None
     params: dict[str, object] = {}
     reasoning_effort: str | None = None
+    purpose: str | None = None  # what the request is for (plan, rubric, code_step ...): only the dummy provider uses it
+    role: str | None = None
     key_index: int = 0  # which of the provider's keys this route uses (free tiers limit each key separately)
 
 
@@ -42,6 +46,8 @@ def build_chat_model(route: RouteConfig) -> "BaseChatModel":
     from langchain_openai import ChatOpenAI  # imported when a model is built: it costs seconds and most commands never build one
 
     provider = route.provider.lower().strip()
+    if provider == "dummy":
+        return DummyChatModel(purpose=route.purpose or "pong", role=route.role or "")
     keys = get_api_keys(route.provider)
     if provider == "gemini" and not keys:
         keys = get_api_keys("google")

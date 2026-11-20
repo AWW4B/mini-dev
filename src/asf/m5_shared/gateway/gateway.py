@@ -163,7 +163,7 @@ class ModelGateway:
 
         role_cfg = self.roles.get(role_key, {})
         provider = str(role_cfg.get("provider", "local"))
-        routes = self._routes_for(role_cfg)
+        routes = [r.model_copy(update={"purpose": purpose, "role": role_key}) for r in self._routes_for(role_cfg)]
 
         strategy = self.strategies.get("worker", "tool_loop")
         # loads langchain_core callbacks, so it is imported when a model is built, not when the module is

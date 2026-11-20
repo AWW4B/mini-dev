@@ -13,6 +13,7 @@
 #   - called by src/asf/m3_orchestration/planning/planner_graph.py: ContractRegistry
 #   - called by src/asf/m3_orchestration/decomposition/leaf_certifier.py: ContractRegistry
 #   - called by src/asf/m4_execution/verification/gate.py: ContractRegistry
+#   - called by src/asf/m3_orchestration/run_graph.py: ContractRegistry
 #   - called by tests/m5_shared/registry/test_registry.py: ContractRegistry
 #   - emits/consumes: emits CONTRACT_CHANGED events; raises DecisionRequest kind BREAKING_CONTRACT
 # INSTRUCTIONS (strict, imperative):
