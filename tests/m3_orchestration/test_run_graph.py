@@ -4,7 +4,7 @@
 # OWNS: Test cases for src/asf/m3_orchestration/run_graph.py
 # DOES NOT OWN: Production code; fixtures shared with other modules (put those in tests/conftest.py)
 # CONNECTS TO (external boundaries only):
-#   - imports from src/asf/m3_orchestration/run_graph.py: build_run_graph, start_run, resume_run (unit under test)
+#   - imports from src/asf/m3_orchestration/run_graph.py: _answered_nodes, _stuck_behind_abandoned, build_run_graph, start_run, resume_run (unit under test)
 #   - imports from src/asf/contracts/requests.py: StructuredRequest (request fixtures)
 #   - imports from src/asf/m5_shared/decisions/broker.py: DecisionBroker (the real decision table)
 #   - imports from src/asf/m5_shared/state_store/store.py: StateStore (the real run and task tables)
@@ -30,7 +30,7 @@ from typing import Any
 from langgraph.checkpoint.memory import MemorySaver
 
 from asf.contracts.requests import StructuredRequest
-from asf.m3_orchestration.run_graph import build_run_graph, resume_run, start_run
+from asf.m3_orchestration.run_graph import _answered_nodes, build_run_graph, resume_run, start_run
 from asf.m5_shared.decisions.broker import DecisionBroker
 from asf.m5_shared.state_store.store import StateStore
 from asf.m5_shared.workspace.blobs import BlobStore
@@ -316,3 +316,34 @@ def test_the_run_row_remembers_the_profile_it_started_with(tmp_path: Path) -> No
     start_run(_request(), tmp_path, over)
     payload = json.loads(store.conn.execute("SELECT payload FROM runs WHERE run_id = ?", (RUN,)).fetchone()["payload"])
     assert payload["profile"] == "dummy"
+
+
+def test_answers_to_escalations_are_applied_not_only_split_questions() -> None:
+    """The autopilot answered an escalation with abandon_subtree and the run waited for ever: only manual_split and clarify answers were read."""
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE decisions (run_id TEXT, status TEXT, topic TEXT, task_id TEXT, payload TEXT)")
+    conn.execute("CREATE TABLE tasks (task_id TEXT, state TEXT)")
+    for task, topic, choice in (("a", "escalation", "abandon_subtree"), ("b", "escalation", "replan"), ("c", "manual_split", "accept_larger_leaf")):
+        conn.execute("INSERT INTO decisions VALUES ('r', 'RESOLVED', ?, ?, ?)", (topic, task, json.dumps({"resolution": {"choice": choice}})))
+        conn.execute("INSERT INTO tasks VALUES (?, 'ESCALATED')", (task,))
+    conn.row_factory = sqlite3.Row
+    accept, abandon = _answered_nodes(SimpleNamespace(conn=conn), "r")  # type: ignore[arg-type]
+    assert sorted(accept) == ["b", "c"] and abandon == ["a"]
+
+
+def test_a_run_whose_remaining_tasks_wait_on_abandoned_ones_is_seen_as_stuck() -> None:
+    import sqlite3
+
+    from asf.m3_orchestration.run_graph import _stuck_behind_abandoned
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE tasks (task_id TEXT, run_id TEXT, state TEXT)")
+    conn.execute("CREATE TABLE decisions (run_id TEXT, status TEXT)")
+    for task, state in (("a", "ABANDONED"), ("b", "BLOCKED"), ("c", "VERIFIED")):
+        conn.execute("INSERT INTO tasks VALUES (?, 'r', ?)", (task, state))
+    store: Any = SimpleNamespace(conn=conn)
+    assert _stuck_behind_abandoned(store, "r") is True
+    conn.execute("INSERT INTO decisions VALUES ('r', 'PENDING')")
+    assert _stuck_behind_abandoned(store, "r") is False
