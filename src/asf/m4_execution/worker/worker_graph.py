@@ -136,10 +136,14 @@ def _context_text(
     return "\n\n".join(f"## {item.source_ref}\n{item.text}" for item in pack.items)
 
 
+_NOT_A_CHANGE = (":(exclude)**/__pycache__/**", ":(exclude)*.pyc", ":(exclude).pytest_cache/**", ":(exclude).mypy_cache/**", ":(exclude).ruff_cache/**")
+
+
 def _commit_and_describe(workspace: Workspace, spec: LeafTaskSpec, worktree: str, attempt_no: int) -> tuple[str, list[str]]:
     """Commit the attempt on its task branch; return (diff blob ref, files touched since the base commit)."""
     wt = Path(worktree)
-    workspace._run_git(["add", "-A"], cwd=wt)
+    # bytecode and test caches are by-products of running the tests, not changes: without this every attempt that ran a test was a policy violation
+    workspace._run_git(["add", "-A", "--", ".", *_NOT_A_CHANGE], cwd=wt)
     code, status, _ = workspace._run_git(["status", "--porcelain"], cwd=wt)
     if code == 0 and status.strip():
         workspace._run_git(
