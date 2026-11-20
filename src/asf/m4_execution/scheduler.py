@@ -34,6 +34,7 @@ import logging
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 from asf.contracts.control import CancelSignal
@@ -72,7 +73,9 @@ class TaskScheduler:
         event_sink: Sink | None = None,
         ctx_tokens: int = 8192,
         lease_ttl_s: int = 600,
+        spec_dir: Path | None = None,
     ) -> None:
+        self._spec_dir = spec_dir  # every queued spec is also written here, so a process that resumes the run can re-queue it
         self._runtime = runtime
         self._store = store
         self._runner = attempt_runner
@@ -139,9 +142,20 @@ class TaskScheduler:
             if task_id in self._specs:
                 return
             self._specs[task_id] = spec
+            self._save_spec(task_id, spec)
             self._order[task_id] = len(self._order)
             self._deps[task_id] = self._lookup_deps(task_id)
             self._set_state(task_id, "BLOCKED" if not self._deps_done(task_id) else "READY")
+
+    def _save_spec(self, task_id: str, spec: LeafTaskSpec) -> None:
+        """Write the spec next to the run (best effort): the queue itself lives in memory and a resumed run is a new process."""
+        if self._spec_dir is None:
+            return
+        try:
+            self._spec_dir.mkdir(parents=True, exist_ok=True)
+            (self._spec_dir / f"{task_id}.json").write_text(spec.model_dump_json(), encoding="utf-8")
+        except (OSError, AttributeError):
+            logger.warning("could not save the spec of task %s", task_id, exc_info=True)
 
     def spec_json(self, task_id: str) -> str | None:
         """The queued spec as JSON, so a run that stops at a human decision can hand its leaves to the process that resumes it."""
