@@ -541,7 +541,7 @@ def _build_execution(components: dict[str, Any], project_root: Path, run_id: str
     store: StateStore = components["state_store"]
     workspace = overrides.get("workspace") or Workspace(project_root)
     runtime = overrides.get("runtime") or LocalRuntime(max_slots=1)
-    gateway = components.get("gateway") or ModelGateway(str(overrides.get("profile_name", "hybrid")), components.get("budget") or _default_budget(run_id))
+    gateway = components.get("gateway") or ModelGateway(str(overrides.get("profile_name") or ModelGateway.default_profile_name()), components.get("budget") or _default_budget(run_id))
     for role, name in dict(overrides.get("model_overrides") or {}).items():  # --model ROLE=NAME
         gateway.roles.setdefault(role, {})["model"] = name
     if overrides.get("strategy_overrides"):  # --strategy ROLE=NAME

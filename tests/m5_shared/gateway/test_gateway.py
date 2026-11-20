@@ -161,3 +161,8 @@ def test_a_schema_the_provider_rejects_at_call_time_is_retried_with_tool_calling
     runnable = ModelGateway._runnable(chat, DummySchema, "groq")
     assert runnable.invoke("go") == DummySchema(summary="via tools")
     assert chat.methods == ["json_schema", "function_calling"]
+
+
+def test_a_run_without_a_profile_uses_the_active_profile_of_models_toml() -> None:
+    """`factory run resume` carries no --profile; it fell back to "hybrid" and asked for an OpenAI key the user never configured."""
+    assert ModelGateway.default_profile_name() == "free"
