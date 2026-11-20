@@ -6,7 +6,7 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/m5_shared/metrics/collector.py: MetricsCollector (D-24)
 #   - imports from src/asf/m5_shared/metrics/pricing.py: price_for (D-27)
-#   - imports from src/asf/m5_shared/trace.py: trace_event (every model call with tokens, latency and the limits used so far)
+#   - imports from src/asf/m5_shared/trace.py: trace_event, clip, current_task (every model call with tokens, latency and the limits used so far)
 #   - called by src/asf/m5_shared/gateway/gateway.py: UsageCallbackHandler
 #   - called by src/asf/m3_orchestration/run_graph.py: drain_call_metrics
 #   - called by tests/m5_shared/gateway/test_usage_callback.py: UsageCallbackHandler
@@ -32,7 +32,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 from asf.m5_shared.metrics.collector import MetricsCollector
 from asf.m5_shared.metrics.pricing import price_for
-from asf.m5_shared.trace import clip, trace_event
+from asf.m5_shared.trace import clip, current_task, trace_event
 
 logger = logging.getLogger(__name__)
 
@@ -202,11 +202,11 @@ class UsageCallbackHandler(BaseCallbackHandler):
             # "database is locked" (WAL: its read snapshot was stale). The run's main thread drains the queue with its own connection.
             with _pending_lock:
                 _pending.append(
-                    (self.run_id, self.task_id, provider, model, tokens_in, tokens_out, cost, latency_ms, datetime.now(UTC).isoformat(), self.role, self.strategy,
+                    (self.run_id, self.task_id or current_task(), provider, model, tokens_in, tokens_out, cost, latency_ms, datetime.now(UTC).isoformat(), self.role, self.strategy,
                      1 if metric.source == "ESTIMATED" else 0, 0)
                 )
         trace_event(
-            "gateway", "model_call", role=self.role, provider=provider, model=model, task=self.task_id, strategy=self.strategy,
+            "gateway", "model_call", role=self.role, provider=provider, model=model, task=self.task_id or current_task(), purpose=self.strategy,
             tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=latency_ms, cost=cost, prompt_chars=self._prompt_chars, prompt_tail=clip(self._prompt_preview, 300),
             reply=clip(reply, 500), reply_chars=len(reply), limits_used=limits,
         )

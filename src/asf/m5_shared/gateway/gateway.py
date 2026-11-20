@@ -165,7 +165,6 @@ class ModelGateway:
         provider = str(role_cfg.get("provider", "local"))
         routes = [r.model_copy(update={"purpose": purpose, "role": role_key}) for r in self._routes_for(role_cfg)]
 
-        strategy = self.strategies.get("worker", "tool_loop")
         # loads langchain_core callbacks, so it is imported when a model is built, not when the module is
         from asf.m5_shared.gateway.usage_callback import UsageCallbackHandler
 
@@ -173,7 +172,7 @@ class ModelGateway:
             run_id=str(self.budget.run_id),
             task_id=task_id,
             role=role_key,
-            strategy=strategy,
+            strategy=purpose,  # what the call was for (plan, rubric, code_step ...): the worker strategy label said nothing about a planner call
             budget=self.budget,
             metrics_db=self.metrics_db,
         )

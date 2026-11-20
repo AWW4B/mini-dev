@@ -5,13 +5,13 @@
 # DOES NOT OWN: Event log and narrative events (event_log.py); metrics tables (collector.py); console logging (logging_setup.py)
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/m5_shared/events/redaction.py: redact_text (no secret reaches the trace)
-#   - called by tests/m5_shared/test_trace.py: start_trace, stop_trace, trace_event, set_run, current_trace_paths, clip
+#   - called by tests/m5_shared/test_trace.py: start_trace, stop_trace, trace_event, set_run, set_task, current_task, current_trace_paths, clip
 #   - called by src/asf/m3_orchestration/run_graph.py: start_trace, set_run, trace_event
-#   - called by src/asf/m5_shared/gateway/usage_callback.py: trace_event, clip
+#   - called by src/asf/m5_shared/gateway/usage_callback.py: trace_event, clip, current_task
 #   - called by src/asf/m5_shared/gateway/gateway.py: trace_event
 #   - called by src/asf/m5_shared/state_store/store.py: trace_event
 #   - called by src/asf/m5_shared/tools/executor.py: trace_event
-#   - called by src/asf/m4_execution/scheduler.py: trace_event
+#   - called by src/asf/m4_execution/scheduler.py: trace_event, set_task
 #   - called by src/asf/m4_execution/worker/strategies.py: trace_event
 #   - called by src/asf/m4_execution/worker/worker_graph.py: trace_event
 #   - called by src/asf/m5_shared/memory/hooks.py: trace_event
@@ -67,6 +67,18 @@ def clip(value: Any, limit: int = PREVIEW_CHARS) -> Any:
     return clip(repr(value), limit)
 
 
+_task_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("asf_trace_task", default=None)
+
+
+def set_task(task_id: str | None) -> None:
+    """The task the current thread is working on: model calls that are not told their task are attributed to it."""
+    _task_var.set(task_id)
+
+
+def current_task() -> str | None:
+    return _task_var.get()
+
+
 def set_run(run_id: str | None) -> None:
     """Tag every later event of this thread and its children with the run id (also the default for other threads)."""
     _run_var.set(run_id)
@@ -100,7 +112,7 @@ def _write(component: str, event: str, data: dict[str, Any], where: str) -> None
         _state["seq"] += 1
         record = {
             "seq": _state["seq"], "ts": datetime.fromtimestamp(now, UTC).isoformat(timespec="milliseconds"), "t_s": round(now - _state["t0"], 3),
-            "run_id": _run_var.get() or _state["run"], "thread": threading.current_thread().name, "component": component, "event": event,
+            "run_id": _run_var.get() or _state["run"], "task_id": _task_var.get(), "thread": threading.current_thread().name, "component": component, "event": event,
             "where": where, "data": data,
         }
         sink.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")

@@ -17,7 +17,7 @@
 #   - called by src/asf/m4_execution/integration/integrator.py: TaskScheduler
 #   - called by tests/m4_execution/test_scheduler.py: MAX_INFRA_RETRIES, TaskScheduler
 #   - called by src/asf/m3_orchestration/run_graph.py: TaskScheduler
-#   - imports from src/asf/m5_shared/trace.py: trace_event (task states and every attempt)
+#   - imports from src/asf/m5_shared/trace.py: trace_event, set_task (task states and every attempt; the thread knows its task)
 #   - emits/consumes: emits STATE_CHANGED and HANDOFF_SENT (scheduler -> worker, causation = the READY event)
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -44,7 +44,7 @@ from asf.contracts.outcomes import Requeue, TaskOutcome
 from asf.contracts.tasks import LeafTaskSpec
 from asf.m5_shared.runtime.local_runtime import LocalRuntime
 from asf.m5_shared.state_store.store import StateStore
-from asf.m5_shared.trace import trace_event
+from asf.m5_shared.trace import set_task, trace_event
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +264,7 @@ class TaskScheduler:
         result: Requeue | TaskOutcome | None = None
         infra_failure: str | None = None
         assert self._runner is not None
+        set_task(task_id)
         trace_event("scheduler", "attempt_start", task=task_id, attempt=attempt_no, role=spec.model_role, files=list(getattr(spec, "allowed_files", [])), tests=list(getattr(spec, "acceptance_test_refs", [])))
         try:
             result = self._runner(spec, lease, attempt_no)
