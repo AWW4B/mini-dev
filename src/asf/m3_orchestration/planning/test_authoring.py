@@ -129,6 +129,25 @@ def _ensure_conftest(project_root: Path) -> None:
         target.write_text(_CONFTEST, encoding="utf-8")
 
 
+def _repair_escapes(content: str) -> str:
+    """A file that is one line holding literal backslash-n sequences is a doubly escaped answer (gpt-oss through tool calling returned
+    one): the test file then failed at collection with a SyntaxError on every run. Real line breaks are put back."""
+    if "\n" not in content and "\\n" in content:
+        return content.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
+    return content
+
+
+def _syntax_error(path: str, content: str) -> str:
+    """The compile error of a Python test file, or '' when it compiles: an unreadable acceptance test can never pass, whatever the worker does."""
+    if not path.endswith(".py"):
+        return ""
+    try:
+        compile(content, path, "exec")
+    except SyntaxError as err:
+        return f"{type(err).__name__}: {err.msg} (line {err.lineno})"
+    return ""
+
+
 def _is_safe_test_path(raw: str) -> bool:
     try:
         _safe_test_path(raw)
@@ -216,12 +235,19 @@ def author_acceptance_tests(
     # A model sometimes lists a source file (src/pkg/core.py) beside its tests; one bad path used to abort the whole run. Re-ask with
     # the paths that were refused (at most twice), then keep the usable files and drop the rest.
     for _ in range(MAX_REASKS):
+        result = _TestFiles(files={path: _repair_escapes(content) for path, content in result.files.items()})
         refused = [path for path in result.files if not _is_safe_test_path(path)]
-        if result.files and not refused:
+        broken = {path: err for path, content in result.files.items() if path not in refused and (err := _syntax_error(path, content))}
+        if result.files and not refused and not broken:
             break
-        feedback = f"{prompt}\n\nYour previous answer used unusable paths {refused or '(no files at all)'}. Every key must be tests/<name>/test_<name>.py; do not include source files."
+        feedback = (
+            f"{prompt}\n\nYour previous answer was rejected. Unusable paths: {refused or 'none'}. "
+            f"Files that do not compile: {broken or 'none'}. Every key must be tests/<name>/test_<name>.py, a complete valid Python file with real line breaks; "
+            "do not include source files."
+        )
         result = draft(role, purpose, feedback)
-    usable = {path: content for path, content in result.files.items() if _is_safe_test_path(path)}
+    result = _TestFiles(files={path: _repair_escapes(content) for path, content in result.files.items()})
+    usable = {path: content for path, content in result.files.items() if _is_safe_test_path(path) and not _syntax_error(path, content)}
     if len(usable) != len(result.files):
         logger.warning("dropped unusable test paths from the model's answer: %s", [path for path in result.files if path not in usable])
     if not usable:
