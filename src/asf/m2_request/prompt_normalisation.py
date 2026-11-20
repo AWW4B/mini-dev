@@ -67,6 +67,26 @@ def _clean_deterministic(text: str) -> str:
     return "\n".join(result_lines).strip()
 
 
+_CHATTER = re.compile(r"^(here is|here's|sure|certainly|of course|this (version|prompt)|i (have|'ve)|let me|---+$)", re.I)
+
+
+def _accept_model_text(candidate: str, deterministic: str) -> str | None:
+    """The tiny model's rewrite is only trusted if it keeps every `code` token of the original; its preamble and sign-off are dropped.
+
+    A 1.7B model once wrapped a clean spec in "Here is the cleaned prompt ..." and "This version is clean ...", and both lines became
+    requirements. A rewrite that loses a backticked name, path or signature could silently change the request, so it is rejected.
+    """
+    lines = candidate.strip().splitlines()
+    while lines and (not lines[0].strip() or _CHATTER.match(lines[0].strip())):
+        lines.pop(0)
+    while lines and (not lines[-1].strip() or _CHATTER.match(lines[-1].strip())):
+        lines.pop()
+    text = "\n".join(lines).strip()
+    if not text or any(token not in text for token in re.findall(r"`([^`\n]+)`", deterministic)):
+        return None
+    return text
+
+
 def normalise_prompt(text: str, gateway: ModelGateway | None = None) -> str:
     deterministic = _clean_deterministic(text)
     if not deterministic:
@@ -80,9 +100,11 @@ def normalise_prompt(text: str, gateway: ModelGateway | None = None) -> str:
                 f"Keep all user constraints, remove ambiguity, and output only the normalized prompt:\n\n{deterministic}"
             )
             content = getattr(resp, "content", "")
-            if isinstance(content, str) and content.strip():
-                return content.strip()
-            return str(resp).strip()
+            accepted = _accept_model_text(content if isinstance(content, str) else str(resp), deterministic)
+            if accepted is None:
+                logger.warning("the model rewrite of the prompt dropped or changed part of the request; using the deterministic cleanup")
+                return deterministic
+            return accepted
         except Exception:  # noqa: BLE001 - any model/provider failure degrades to the deterministic cleanup
             logger.warning("model cleanup of the prompt failed; using the deterministic cleanup", exc_info=True)
             return deterministic

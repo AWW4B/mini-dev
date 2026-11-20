@@ -51,3 +51,20 @@ def test_normalise_prompt_meets_contract() -> None:
 
     enhanced = normalise_prompt("Fix the login bug", gateway=fake_gateway)
     assert enhanced == "Optimized prompt text by T1 model"
+
+
+def _gateway_answering(text: str) -> Any:
+    gateway: Any = MagicMock()
+    gateway.model_for.return_value.invoke.return_value = SimpleNamespace(content=text)
+    return gateway
+
+
+def test_the_models_preamble_and_sign_off_are_not_kept() -> None:
+    spec = "Build `wordfreq`.\nTop words of a file."
+    answer = "Here is the **cleaned prompt**:\n\nBuild `wordfreq`.\nTop words of a file.\n\n---\nThis version is clean and ready."
+    assert normalise_prompt(spec, gateway=_gateway_answering(answer)) == "Build `wordfreq`.\nTop words of a file."
+
+
+def test_a_rewrite_that_loses_a_code_token_is_rejected_for_the_deterministic_text() -> None:
+    spec = "Implement `top_words(text, n)` in `src/core.py`."
+    assert normalise_prompt(spec, gateway=_gateway_answering("Implement a function that returns the top words.")) == spec
