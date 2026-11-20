@@ -203,3 +203,12 @@ def test_a_blob_ref_attachment_is_read_and_its_text_becomes_the_requirements(fak
     assert any("Top words of a text file." in r.text for r in structured.requirements)
     assert structured.acceptance == ["Acceptance: pytest passes."]
     assert result["document_refs"]  # blobs are content-addressed: markdown identical to the attachment keeps its ref
+
+
+def test_an_explicit_mode_hint_beats_the_keyword_guess() -> None:
+    """A new-build spec that says a missing file prints an error was classified as a debug run; --mode new_build must win."""
+    prompt = "Build a tool. A missing file prints an error and returns 2."
+    guessed = build_request_graph().invoke(_basic_input(prompt=prompt))["structured_request"]
+    hinted = build_request_graph().invoke(_basic_input(prompt=prompt, mode_hint="new_build"))["structured_request"]
+    assert guessed.task_type.value == "debug"
+    assert hinted.task_type.value == "new_build"
