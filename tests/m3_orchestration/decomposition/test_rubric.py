@@ -97,3 +97,10 @@ def test_a_tiny_model_cannot_rate_a_precise_task_as_blocking_on_its_own() -> Non
     """The measured failure: a precise one-file task with acceptance criteria scored 1.0 by the 1.7B model must stay below the clarification limit."""
     score = score_node(_node(), gateway=_Gateway({"ambiguity": 1.0, "coupling": 1.0, "notes": "too ambiguous"}))  # type: ignore[arg-type]
     assert score.ambiguity <= score_node(_node()).ambiguity + MODEL_MARGIN < 0.85
+
+
+def test_a_one_file_task_that_depends_on_two_others_stays_a_leaf_whatever_the_tiny_model_says() -> None:
+    """Measured: a 1.7B model gave coupling 0.8 to 0.95 to one-file tasks, so none could be a leaf (limit 0.7) and every run stalled in splitting."""
+    node = _node(deps=["a", "b", "a"], contract_refs=["core@0.1.0"], allowed_files=["src/core.py"])
+    score = score_node(node, gateway=_Gateway({"ambiguity": 0.0, "coupling": 1.0, "notes": "coupled"}))  # type: ignore[arg-type]
+    assert score.coupling <= 0.7

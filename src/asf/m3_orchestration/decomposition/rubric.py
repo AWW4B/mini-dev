@@ -35,6 +35,7 @@ _VAGUE = re.compile(r"\b(etc|and so on|somehow|as needed|appropriate(ly)?|tbd|ma
 # A tiny model's ambiguity score may raise the heuristic one by at most this much: a 1.7B model once rated a precise one-file
 # task 1.0 and stalled a whole run on a clarification question. The heuristics see the acceptance criteria and the file list.
 MODEL_MARGIN = 0.4
+COUPLING_MARGIN = 0.2  # coupling decides leaf versus split directly (limit 0.7), so the model gets less room: a 1.7B model rated every task 0.8 to 0.95
 
 
 class RubricScore(BaseModel):
@@ -60,7 +61,7 @@ def _deterministic(node: TaskNode) -> RubricScore:
     if _VAGUE.search(node.goal):
         ambiguity += 0.2
         notes.append("vague wording")
-    coupling = 0.15 * len(node.deps) + 0.1 * len(node.contract_refs) + 0.1 * max(0, len(node.allowed_files) - 1)
+    coupling = 0.15 * len(set(node.deps)) + 0.1 * len(node.contract_refs) + 0.1 * max(0, len(node.allowed_files) - 1)
     return RubricScore(ambiguity=_clamp(ambiguity), coupling=_clamp(coupling), notes="deterministic rubric: " + (", ".join(notes) or "no concerns"))
 
 
@@ -86,5 +87,5 @@ def score_node(node: TaskNode, *, gateway: ModelGateway | None = None) -> Rubric
         return _deterministic(node)
     heuristic = _deterministic(node)
     ambiguity = min(_clamp(score.ambiguity), heuristic.ambiguity + MODEL_MARGIN)
-    coupling = min(_clamp(score.coupling), heuristic.coupling + MODEL_MARGIN)
+    coupling = min(_clamp(score.coupling), heuristic.coupling + COUPLING_MARGIN)
     return RubricScore(ambiguity=ambiguity, coupling=coupling, notes=score.notes)
