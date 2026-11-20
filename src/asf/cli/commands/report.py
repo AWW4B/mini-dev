@@ -9,6 +9,7 @@
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
 #   - imports from src/asf/cli/context.py: EXIT_OK, EXIT_USER, guard, open_store, renderer_for, resolve_run_id (shared CLI plumbing)
 #   - imports from src/asf/m3_orchestration/delivery.py: write_delivery (`factory deliver`: REPORT.md and product.zip)
+#   - imports from src/asf/m3_orchestration/autonomy.py: drive (`factory autopilot`: an unattended run that ends with the report and the archive)
 #   - called by src/asf/cli/app.py: register
 #   - called by tests/cli/commands/test_report.py: report, register
 #   - emits/consumes: none
@@ -33,6 +34,7 @@ from pathlib import Path
 import typer
 
 from asf.cli.context import EXIT_OK, EXIT_USER, guard, open_store, project_root, renderer_for, resolve_run_id
+from asf.m3_orchestration.autonomy import drive
 from asf.m3_orchestration.delivery import write_delivery
 from asf.m5_shared.state_store.store import StateStore
 from asf.m5_shared.workspace.blobs import BlobStore
@@ -87,6 +89,19 @@ def deliver() -> int:
 
 def register(app: typer.Typer) -> None:
     """Attach the `report` command(s) to the root Typer app."""
+
+    @app.command("autopilot", help="Run the project unattended: decisions are answered openly (bigger model, then fixed policy), failures are accepted and reported, and the zip is delivered.")
+    def autopilot_cmd(
+        spec: str = typer.Option("SPEC.md", "--file", help="The specification file"),
+        mode: str = typer.Option("new_build", "--mode", help="Run mode"),
+        profile: str = typer.Option("", "--profile", help="Model profile (default: the project's)"),
+    ) -> None:
+        def go() -> int:
+            report_path, archive = drive(project_root(), spec, mode, profile)
+            renderer_for("plain").message(f"Report: {report_path}; product archive: {archive}", "success")
+            return EXIT_OK
+
+        raise typer.Exit(code=guard(go))
 
     @app.command("deliver", help="Write REPORT.md and product.zip (the project's files) under .factory/deliver, even when the run did not finish.")
     def deliver_cmd() -> None:
