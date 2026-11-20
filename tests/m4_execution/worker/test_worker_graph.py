@@ -159,3 +159,21 @@ def test_failing_to_create_a_worktree_is_a_worker_error(tmp_path: Path) -> None:
     ws, base = _repo(tmp_path)
     with pytest.raises(WorkerError):
         run_attempt(_spec("not-a-commit"), _lease(), 1, workspace=ws, gateway=_Gateway(), executor=_Executor())  # type: ignore[arg-type]
+
+
+def test_bytecode_and_test_caches_made_by_running_tests_are_not_changes(tmp_path: Path) -> None:
+    """Running the tests left __pycache__/*.pyc in the worktree; every such attempt failed the gate with POLICY_VIOLATION."""
+
+    class _Noisy(_Executor):
+        def invoke(self, invocation: Any, allowed_files: list[str]) -> Any:
+            result = super().invoke(invocation, allowed_files)
+            cache = Path(invocation.workspace_dir) / "src" / "__pycache__"
+            cache.mkdir(exist_ok=True)
+            (cache / "billing.cpython-314.pyc").write_bytes(b"\x00")
+            (Path(invocation.workspace_dir) / ".pytest_cache").mkdir(exist_ok=True)
+            (Path(invocation.workspace_dir) / ".pytest_cache" / "x").write_text("1", encoding="utf-8")
+            return result
+
+    ws, base = _repo(tmp_path)
+    change = run_attempt(_spec(base), _lease(), 1, workspace=ws, gateway=_Gateway(), executor=_Noisy())  # type: ignore[arg-type]
+    assert change.files_touched == ["src/billing.py"]
