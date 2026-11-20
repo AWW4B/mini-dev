@@ -4,7 +4,7 @@
 # OWNS: Test cases for src/asf/m3_orchestration/autonomy.py
 # DOES NOT OWN: Production code; fixtures shared with other modules (put those in tests/conftest.py)
 # CONNECTS TO (external boundaries only):
-#   - imports from src/asf/m3_orchestration/autonomy.py: choose_by_policy (unit under test)
+#   - imports from src/asf/m3_orchestration/autonomy.py: choose_by_policy, _spec_review (unit under test)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -16,6 +16,8 @@
 # FORBIDDEN: shell=True; os.system; hardcoded absolute paths; container runtimes; importing project modules not listed under CONNECTS TO; printing secrets or API keys; real API keys; network access in unmarked tests; sleeping for timing (use the fake clock)
 # ERRORS: Failures surface as pytest assertion failures.
 # DONE WHEN: (1) All tests pass via `uv run pytest tests/m3_orchestration/test_autonomy.py` on Windows and Linux once src/asf/m3_orchestration/autonomy.py is implemented. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check tests/m3_orchestration/test_autonomy.py` and `uv run mypy tests/m3_orchestration/test_autonomy.py` are clean.
+
+from pathlib import Path
 
 from asf.m3_orchestration.autonomy import choose_by_policy
 
@@ -31,3 +33,24 @@ def test_the_policy_approves_accepts_and_replans_once_then_abandons() -> None:
 def test_the_policy_never_aborts_the_run_on_its_own() -> None:
     assert choose_by_policy(["abort_run"], 0)[0] == "abort_run"  # only option left: it is taken and recorded, never preferred
     assert choose_by_policy(["abort_run", "abandon_subtree"], 5)[0] == "abandon_subtree"
+
+
+def test_the_spec_review_keeps_only_findings_that_cite_a_real_requirement_and_file(tmp_path: Path) -> None:
+    import json
+
+    from asf.m3_orchestration.autonomy import _spec_review
+
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory" / "requirements.json").write_text(json.dumps({"REQ-002": "main takes a file path"}), encoding="utf-8")
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "cli.py").write_text("x = 1", encoding="utf-8")
+    answer = json.dumps(
+        [
+            {"requirement": "REQ-002", "file": "src/pkg/cli.py", "deviation": "it wants --file instead of a positional path"},
+            {"requirement": "REQ-999", "file": "src/pkg/cli.py", "deviation": "made up"},
+        ]
+    )
+    out = _spec_review(tmp_path, "", reviewer=lambda prompt: answer)
+    assert out is not None
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert [f["requirement"] for f in data["findings"]] == ["REQ-002"] and data["dropped"] == 1
