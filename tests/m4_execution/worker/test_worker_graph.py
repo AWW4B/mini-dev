@@ -177,3 +177,19 @@ def test_bytecode_and_test_caches_made_by_running_tests_are_not_changes(tmp_path
     ws, base = _repo(tmp_path)
     change = run_attempt(_spec(base), _lease(), 1, workspace=ws, gateway=_Gateway(), executor=_Noisy())  # type: ignore[arg-type]
     assert change.files_touched == ["src/billing.py"]
+
+
+def test_a_task_that_depends_on_another_starts_with_that_tasks_verified_code(tmp_path: Path) -> None:
+    """The cli task imported the core module and failed on ImportError every time: its worktree was cut before core's code existed."""
+    ws, base = _repo(tmp_path)
+    root = ws.repo_dir
+    _git(root, "checkout", "-q", "-b", "task/dep")
+    (root / "src" / "dep.py").write_text("DEP = 1\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-m", "dep work")
+    _git(root, "checkout", "-q", "-")
+    spec = _spec(base)
+    spec.depends_on = ["dep"]
+    change = run_attempt(spec, _lease(), 1, workspace=ws, gateway=_Gateway(), executor=_Executor())  # type: ignore[arg-type]
+    assert (Path(change.worktree_path) / "src" / "dep.py").is_file()
+    assert change.files_touched == ["src/billing.py"]  # the dependency's file is not this task's change

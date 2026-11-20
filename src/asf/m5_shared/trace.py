@@ -13,6 +13,7 @@
 #   - called by src/asf/m5_shared/tools/executor.py: trace_event
 #   - called by src/asf/m4_execution/scheduler.py: trace_event
 #   - called by src/asf/m4_execution/worker/strategies.py: trace_event
+#   - called by src/asf/m4_execution/worker/worker_graph.py: trace_event
 #   - called by src/asf/m5_shared/memory/hooks.py: trace_event
 #   - called by src/asf/m5_shared/decisions/broker.py: trace_event
 #   - called by src/asf/m3_orchestration/decomposition/decomposition_graph.py: trace_event

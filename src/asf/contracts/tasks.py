@@ -133,6 +133,7 @@ class LeafTaskSpec(BaseModel):
     max_attempts: int = Field(default=3, description="A-3: bounded retries, then re-split or escalate")
     base_commit: str
     parent_branch: str
+    depends_on: list[str] = Field(default_factory=list, description="task ids whose verified branches are merged into this task's worktree before it starts")
 
 
 class AttemptRecord(BaseModel):
