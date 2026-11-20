@@ -221,13 +221,23 @@ class ModelGateway:
             import openai
 
             transient: tuple[type[BaseException], ...] = (openai.APIConnectionError, openai.APITimeoutError, openai.InternalServerError)
+            rejected: tuple[type[BaseException], ...] = (openai.BadRequestError,)
         except ImportError:
-            transient = (ConnectionError, TimeoutError)
+            transient, rejected = (ConnectionError, TimeoutError), ()
         retry: dict[str, Any] = {"retry_if_exception_type": transient, "stop_after_attempt": 3}
         if output_schema is not None and getattr(chat, "with_structured_output", None) is not None:
             try:
-                return chat.with_structured_output(output_schema, method="json_schema").with_retry(**retry)  # type: ignore[no-any-return]
+                strict = chat.with_structured_output(output_schema, method="json_schema").with_retry(**retry)
             except Exception:  # noqa: BLE001 - the provider rejects strict json_schema output: use its default mode
                 logger.debug("json_schema structured output unsupported by %s; using the default method", provider, exc_info=True)
                 return chat.with_structured_output(output_schema).with_retry(**retry)  # type: ignore[no-any-return]
+            # strict json_schema is refused at call time for schemas with free-form objects (a dict field): Groq answered 400
+            # "additionalProperties:false must be set on every object" and stopped a run. Tool calling accepts those schemas.
+            if rejected:
+                try:
+                    loose = chat.with_structured_output(output_schema, method="function_calling").with_retry(**retry)
+                    return strict.with_fallbacks([loose], exceptions_to_handle=rejected)  # type: ignore[no-any-return]
+                except Exception:  # noqa: BLE001 - a model without tool calling keeps the strict form only
+                    logger.debug("function_calling structured output unsupported by %s", provider, exc_info=True)
+            return strict  # type: ignore[no-any-return]
         return chat.with_retry(**retry)  # type: ignore[no-any-return]
