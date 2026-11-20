@@ -138,3 +138,26 @@ def test_a_missing_primary_key_falls_through_to_the_next_provider(monkeypatch: p
     monkeypatch.setattr("asf.m5_shared.gateway.providers.get_api_keys", lambda provider: keys.get(provider, []))
     monkeypatch.setattr("asf.m5_shared.gateway.providers.get_api_key", lambda provider: (keys.get(provider) or [""])[0] or None)
     assert ModelGateway("free", _budget()).model_for("reviewer", "review") is not None  # type: ignore[arg-type]
+
+
+def test_a_schema_the_provider_rejects_at_call_time_is_retried_with_tool_calling() -> None:
+    """Groq answers 400 to strict json_schema for a schema with a dict field; the same route then works through tool calling."""
+    import httpx
+    import openai
+
+    rejected = openai.BadRequestError("additionalProperties:false must be set", response=httpx.Response(400, request=httpx.Request("POST", "http://x")), body=None)  # type: ignore[arg-type]
+
+    def refuse(_: Any) -> Any:
+        raise rejected
+
+    class FakeChat:
+        methods: list[str] = []
+
+        def with_structured_output(self, schema: Any, method: str = "default") -> Any:
+            self.methods.append(method)
+            return RunnableLambda(refuse) if method == "json_schema" else RunnableLambda(lambda _: DummySchema(summary="via tools"))
+
+    chat = FakeChat()
+    runnable = ModelGateway._runnable(chat, DummySchema, "groq")
+    assert runnable.invoke("go") == DummySchema(summary="via tools")
+    assert chat.methods == ["json_schema", "function_calling"]
