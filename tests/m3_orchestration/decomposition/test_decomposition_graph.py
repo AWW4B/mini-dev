@@ -51,6 +51,9 @@ class _Scheduler:
     def enqueue(self, spec: Any) -> None:
         self.specs.append(spec)
 
+    def reopen(self, spec: Any) -> None:
+        self.specs.append(spec)
+
 
 class _Broker:
     def __init__(self) -> None:

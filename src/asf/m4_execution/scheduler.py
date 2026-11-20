@@ -147,6 +147,24 @@ class TaskScheduler:
             self._deps[task_id] = self._lookup_deps(task_id)
             self._set_state(task_id, "BLOCKED" if not self._deps_done(task_id) else "READY")
 
+    def reopen(self, spec: LeafTaskSpec) -> None:
+        """A person decided an escalated task should be tried again as this spec: fresh attempts, READY (or BLOCKED on its dependencies).
+
+        ``enqueue`` ignores a task it already holds, so the accepted larger leaf used to be recorded and then never dispatched.
+        """
+        task_id = str(spec.task_id)
+        with self._lock:
+            if task_id not in self._specs:
+                self.enqueue(spec)
+                return
+            if self._state.get(task_id) not in ("ESCALATED", "CANCELLED"):
+                return
+            self._specs[task_id] = spec
+            self._save_spec(task_id, spec)
+            self._attempts.pop(task_id, None)
+            self._evidence.pop(task_id, None)
+            self._set_state(task_id, "BLOCKED" if not self._deps_done(task_id) else "READY")
+
     def _save_spec(self, task_id: str, spec: LeafTaskSpec) -> None:
         """Write the spec next to the run (best effort): the queue itself lives in memory and a resumed run is a new process."""
         if self._spec_dir is None:

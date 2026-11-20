@@ -214,7 +214,7 @@ def _force_leaf(engine: _Engine, node: TaskNode, why: str) -> str:
     node = transition(node, TaskState.LEAF_CERTIFIED, why).model_copy(update={"kind": type(node.kind)("leaf")})
     engine.frontier.update(node)
     if engine.scheduler is not None:
-        engine.scheduler.enqueue(spec)
+        engine.scheduler.reopen(spec)  # the worker may already have escalated this task: enqueue would ignore it
     return str(node.id)
 
 
