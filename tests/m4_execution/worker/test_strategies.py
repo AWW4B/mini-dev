@@ -293,3 +293,17 @@ def test_a_later_step_of_one_file_sees_the_earlier_work_marked_as_its_own(tmp_pa
     gateway = _Gateway({"action": "done", "message": "ok"})
     _run("tool_loop", gateway, _Executor(), tmp_path, _spec(max_turns=3))
     assert "src/billing.py (YOURS" in gateway.prompts[0] and "def first()" in gateway.prompts[0]
+
+
+def test_a_helper_attempt_asks_the_bigger_tier_while_tools_stay_the_workers(tmp_path: Path) -> None:
+    roles: list[str] = []
+
+    class _Roles(_Gateway):
+        def model_for(self, role: Any, purpose: str, **kw: Any) -> Any:
+            roles.append(str(role))
+            return super().model_for(role, purpose, **kw)
+
+    gateway = _Roles({"action": "done", "message": "ok"})
+    spec = _spec(max_turns=2)
+    run_strategy("tool_loop", spec, str(tmp_path), gateway=gateway, executor=_Executor(), model_role="T3")  # type: ignore[arg-type]
+    assert roles == ["T3"]

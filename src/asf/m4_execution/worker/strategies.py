@@ -32,6 +32,7 @@ import json
 import logging
 import re
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -52,7 +53,8 @@ WorkerStrategyName = Literal["tool_loop", "whole_file_edit", "diff_edit", "code_
 
 FORMAT_REPAIRS_PER_STEP = 2
 _TOOL_OUTPUT_CHARS = 4000
-_ROLE = "T2"
+_ROLE = "T2"  # the role tools are permitted for; the MODEL role may differ on a helper attempt (below)
+_MODEL_ROLE: ContextVar[str] = ContextVar("asf_worker_model_role", default="T2")
 
 _SYSTEM = (
     "You are a coding worker. Work only on the files listed under ALLOWED FILES; writes anywhere else are denied. "
@@ -147,7 +149,7 @@ def _test_selectors(spec: LeafTaskSpec, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _model_text(gateway: ModelGateway, prompt: str) -> str:
-    reply = gateway.model_for(cast(Any, _ROLE), purpose="code_step").invoke(prompt)
+    reply = gateway.model_for(cast(Any, _MODEL_ROLE.get()), purpose="code_step").invoke(prompt)
     return str(getattr(reply, "content", reply))
 
 
@@ -401,8 +403,12 @@ def run_strategy(
     gateway: ModelGateway,
     executor: ToolExecutor,
     context: str = "",
+    model_role: str | None = None,
 ) -> str:
     """Run the bounded loop; return the worker self-report.
+
+    model_role asks a different tier to do the thinking (the helper: a bigger model takes over a task the small coder could not do);
+    the tools it may use stay those of the worker.
 
     code_exec is only used when the active sandbox tier is A; otherwise it falls back to tool_loop (and says why).
     """
@@ -412,4 +418,8 @@ def run_strategy(
         chosen = "tool_loop"
     if chosen not in _STRATEGIES:
         raise ValueError(f"unknown worker strategy '{name}'")
-    return _STRATEGIES[chosen](spec, worktree, gateway, executor, context)
+    token = _MODEL_ROLE.set(model_role or "T2")
+    try:
+        return _STRATEGIES[chosen](spec, worktree, gateway, executor, context)
+    finally:
+        _MODEL_ROLE.reset(token)

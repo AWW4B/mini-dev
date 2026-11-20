@@ -88,4 +88,4 @@ def test_the_report_command_is_registered(cli_project: Any) -> None:
     register(app)
     cli_project.add_run(status="DONE")
     _finish(cli_project)
-    assert CliRunner().invoke(app, ["run1"]).exit_code == 0
+    assert CliRunner().invoke(app, ["report", "run1"]).exit_code == 0
