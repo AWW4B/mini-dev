@@ -33,6 +33,7 @@
 #   - imports from src/asf/m5_shared/tools/registry.py: ToolRegistry (tool registry)
 #   - imports from src/asf/m5_shared/workspace/workspace.py: Workspace (git worktrees)
 #   - imports from src/asf/m5_shared/events/event_log.py: EventLog (the log the relay feeds)
+#   - imports from src/asf/contracts/contract_spec.py: ContractQuery (the pinned contracts the test author is shown)
 #   - imports from src/asf/m5_shared/registry/registry.py: ContractRegistry (the plan's interfaces reach the workers as capsules)
 #   - imports from src/asf/m5_shared/state_store/outbox.py: OutboxRelay (committed events reach the event log)
 #   - imports from src/asf/m3_orchestration/planning/test_authoring.py: author_acceptance_tests (acceptance tests written by the planner tier)
@@ -71,6 +72,7 @@ from langgraph.types import Command, interrupt
 
 from asf.config.paths import get_paths
 from asf.contracts.budget import RunBudget
+from asf.contracts.contract_spec import ContractQuery
 from asf.contracts.decisions import DecisionRequest
 from asf.contracts.ids import new_id
 from asf.contracts.models import ModelProfile
@@ -647,10 +649,17 @@ def _build_execution(components: dict[str, Any], project_root: Path, run_id: str
     def authoring(node: Any) -> list[str]:
         from asf.m3_orchestration.planning.test_authoring import author_acceptance_tests
 
+        registry = components.get("registry")
+        context = ""
+        if registry is not None and node.contract_refs:
+            modules = [ref.partition("@")[0] for ref in node.contract_refs]
+            pinned = {ref.partition("@")[0]: ref.partition("@")[2] for ref in node.contract_refs if "@" in ref}
+            capsules = registry.query(ContractQuery(module_ids=modules, pinned_versions=pinned))
+            context = "PINNED CONTRACTS (the exact names and signatures the tests must use):\n" + "\n".join(f"- {c.module_id}.{c.operation}: " + " ".join(c.lines) for c in capsules)
         paths = author_acceptance_tests(
-            node, bool(overrides.get("allow_local_tests")), gateway=gateway, project_root=project_root, broker=components["decision_broker"]
+            node, bool(overrides.get("allow_local_tests")), gateway=gateway, project_root=project_root, broker=components["decision_broker"], context=context
         )
-        commit_tests(paths, str(node.id))
+        commit_tests([*paths, *(["conftest.py"] if (project_root / "conftest.py").is_file() else [])], str(node.id))
         return paths
 
     components.setdefault("authoring", authoring)

@@ -198,3 +198,14 @@ def test_the_prompt_asks_for_the_requirement_ids_to_appear_in_the_tests(tmp_path
     gateway = _Gateway()
     _author(tmp_path, gateway)
     assert "must appear, as a comment or in a test name" in gateway.prompts[0]
+
+
+def test_the_author_is_told_the_import_line_and_the_pinned_contract_and_gets_a_root_conftest(tmp_path: Path) -> None:
+    """The planner wrote `from src.wordfreq.core import top_n_words` while the contract said top_words: the test failed at collection."""
+    node = _node().model_copy(update={"allowed_files": ["src/wordfreq/core.py"]})
+    gateway = _Gateway()
+    paths = author_acceptance_tests(node, False, gateway=gateway, project_root=tmp_path, context="PINNED CONTRACTS:\n- core.top_words: top_words(text: str, n: int = 3)")  # type: ignore[arg-type]
+    assert paths == ["tests/test_refund.py"]
+    prompt = gateway.prompts[0]
+    assert "from wordfreq.core import <name from the contract>" in prompt and "top_words(text: str, n: int = 3)" in prompt
+    assert "sys.path.insert" in (tmp_path / "conftest.py").read_text(encoding="utf-8")

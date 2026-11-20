@@ -49,6 +49,7 @@ _PROMPT = (
     "the final traceability check looks for the id text in the test files. "
     "Answer with JSON: {{\"files\": [{{\"path\": \"tests/<path>/test_<name>.py\", \"content\": \"<complete file content>\"}}]}}.\n\n"
     "GOAL: {goal}\nACCEPTANCE CRITERIA: {criteria}\nCONTRACTS: {contracts}\nFILES UNDER TEST (do not write or copy these; only test them): {files}\n"
+    "Import the code under test the way a user would: {imports} (a root conftest.py puts the src folder on the path). Use only the names in the pinned contracts below; never invent others.\n"
     "Use exactly these keys for the test files: {targets}\n{context}\n{skill}"
 )
 
@@ -96,6 +97,36 @@ def _target_names(node: TaskNode) -> list[str]:
     # a file that is already a test (tests/test_core.py) is what a worker writes, not a module under test: no tests/test_test_core.py
     names = [f"tests/test_{m.stem}.py" for m in modules if m.suffix == ".py" and m.parts[0] != "tests" and not m.stem.startswith("test_")]
     return list(dict.fromkeys(names)) or ["tests/test_<name>.py"]
+
+
+def _import_lines(node: TaskNode) -> list[str]:
+    """How a test imports each module under test: src/wordfreq/core.py is `import wordfreq.core` (src is on the path through conftest.py)."""
+    lines = []
+    for raw in node.allowed_files:
+        path = PurePosixPath(raw.replace(chr(92), "/"))
+        if path.suffix != ".py" or path.name == "__init__.py" or path.parts[0] == "tests":
+            continue
+        parts = path.with_suffix("").parts
+        lines.append("from " + ".".join(parts[1:] if parts[0] == "src" else parts) + " import <name from the contract>")
+    return lines
+
+
+_CONFTEST = """import sys
+from pathlib import Path
+
+# generated tests import the project like a user does; the src layout and the project root are made importable here
+for _folder in (Path(__file__).parent / "src", Path(__file__).parent):
+    if str(_folder) not in sys.path:
+        sys.path.insert(0, str(_folder))
+"""
+
+
+def _ensure_conftest(project_root: Path) -> None:
+    """Write the root conftest.py once: without it `from wordfreq.core import ...` fails at collection in a src layout."""
+    target = project_root / "conftest.py"
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_CONFTEST, encoding="utf-8")
 
 
 def _is_safe_test_path(raw: str) -> bool:
@@ -146,6 +177,7 @@ def author_acceptance_tests(
         contracts=", ".join(node.contract_refs) or "(none)",
         files=", ".join(node.allowed_files) or "(unspecified)",
         targets=", ".join(_target_names(node)),
+        imports="; ".join(_import_lines(node)) or "import the module by its package path",
         context=context,
         skill=_skill_text(skills),
     )
@@ -194,6 +226,7 @@ def author_acceptance_tests(
         logger.warning("dropped unusable test paths from the model's answer: %s", [path for path in result.files if path not in usable])
     if not usable:
         raise InvalidModelOutput("The model returned no usable test files (they must be under tests/ and named test_*.py)")
+    _ensure_conftest(project_root)
     written: list[str] = []
     for raw_path, content in usable.items():
         rel = _safe_test_path(raw_path)
