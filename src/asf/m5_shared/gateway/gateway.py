@@ -28,6 +28,7 @@
 #   - called by src/asf/m3_orchestration/run_graph.py: ModelGateway
 #   - called by src/asf/cli/commands/run.py: ModelGateway
 #   - called by src/asf/m3_orchestration/autonomy.py: ModelGateway
+#   - called by src/asf/m3_orchestration/supervisor.py: ModelGateway
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
