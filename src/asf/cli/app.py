@@ -99,6 +99,19 @@ def _root_callback(ctx: typer.Context) -> None:
         raise typer.Exit(code=2)  # nothing to do without a terminal: `factory --help` lists the commands
 
 
+def _utf8_streams() -> None:
+    """Model text carries characters the Windows console code page cannot encode (a non-breaking hyphen crashed `tasks show`):
+    write UTF-8 and replace what a terminal still cannot show, instead of raising."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass  # a stream that cannot be reconfigured keeps its own encoding
+
+
 def main() -> None:
+    _utf8_streams()
     configure_logging()
     app()

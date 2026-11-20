@@ -184,3 +184,10 @@ def test_the_model_may_answer_with_a_list_of_path_and_content_objects(tmp_path: 
 
     gateway.model_for = lambda *a, **k: _ListModel()  # type: ignore[method-assign]
     assert _author(tmp_path, gateway) == ["tests/test_core.py"]
+
+
+def test_test_files_are_not_asked_to_have_tests_of_their_own() -> None:
+    from asf.m3_orchestration.planning.test_authoring import _target_names
+
+    node = _node().model_copy(update={"allowed_files": ["src/a.py", "tests/test_core.py", "test_x.py", "README.md"]})
+    assert _target_names(node) == ["tests/test_a.py"]
