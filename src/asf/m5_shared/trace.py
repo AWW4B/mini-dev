@@ -38,6 +38,7 @@ import os
 import sys
 import threading
 import time
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -49,7 +50,9 @@ _PACKAGE_ROOT = Path(__file__).resolve().parents[1]  # src/asf
 _run_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("asf_trace_run", default=None)
 _lock = threading.Lock()
 _busy = threading.local()  # redaction can log a warning, which the log handler would trace, which redacts again: never re-enter
-_state: dict[str, Any] = {"jsonl": None, "text": None, "paths": None, "t0": 0.0, "seq": 0, "handler": None, "run": None, "monitor": False}
+_POLL_S = 5.0
+_STALL_S = float(os.environ.get("FACTORY_STALL_S", "90"))  # this long without a trace line means something is blocked: every thread's stack goes into the trace
+_state: dict[str, Any] = {"jsonl": None, "text": None, "paths": None, "t0": 0.0, "seq": 0, "handler": None, "run": None, "monitor": False, "last": 0.0, "watchdog": None, "gen": 0}
 
 
 def clip(value: Any, limit: int = PREVIEW_CHARS) -> Any:
@@ -117,6 +120,7 @@ def _write(component: str, event: str, data: dict[str, Any], where: str) -> None
         }
         sink.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
         sink.flush()
+        _state["last"] = now
         if text is not None:
             brief = " ".join(f"{k}={json.dumps(v, ensure_ascii=False, default=str)[:160]}" for k, v in data.items())
             text.write(f"{record['ts'][11:23]} #{record['seq']:<5} [{component}] {event} {brief}  @{where}\n")
@@ -197,6 +201,26 @@ def _start_call_monitor() -> None:
     _state["monitor"] = True
 
 
+def _watch(generation: int) -> None:
+    """If nothing was traced for FACTORY_STALL_S seconds the process is blocked or waiting on a slow call: record where every thread is."""
+    reported = 0.0
+    while _state["jsonl"] is not None and _state["gen"] == generation:
+        time.sleep(_POLL_S)
+        last = float(_state["last"] or 0.0)
+        idle = time.time() - last
+        if idle < _STALL_S or last == reported:
+            continue
+        reported = last
+        try:
+            names = {t.ident: t.name for t in threading.enumerate()}
+            stacks = {}
+            for ident, frame in sys._current_frames().items():
+                stacks[f"{names.get(ident, '?')}#{ident}"] = [" ".join(line.split()) for line in traceback.format_stack(frame)[-6:]]
+            _write("watchdog", "stall", {"silent_s": round(idle, 1), "threads": clip(stacks, 1500)}, "trace.py:_watch")
+        except Exception:  # noqa: BLE001 - the watchdog never raises
+            return
+
+
 def start_trace(project_root: Path, run_id: str | None = None) -> Path:
     """Open (append to) <project>/.factory/logs/trace.jsonl and trace.log and start capturing log records. Returns the JSONL path."""
     mode = os.environ.get("FACTORY_TRACE", "on").lower()
@@ -217,6 +241,11 @@ def start_trace(project_root: Path, run_id: str | None = None) -> Path:
             logging.getLogger().setLevel(min(logging.getLogger().level or logging.INFO, logging.DEBUG) if mode == "calls" else logging.getLogger().level)
             _state["handler"] = handler
         set_run(run_id)
+        _state["last"] = time.time()
+        _state["gen"] += 1  # a new trace retires the previous watcher
+        watcher = threading.Thread(target=_watch, args=(_state["gen"],), name="trace-watchdog", daemon=True)
+        _state["watchdog"] = watcher
+        watcher.start()
         _write("trace", "started", {"project": str(project_root), "mode": mode, "pid": os.getpid()}, _where(2))
         if mode == "calls" and not _state["monitor"]:
             _start_call_monitor()
