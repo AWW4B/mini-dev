@@ -4,7 +4,7 @@
 # OWNS: Test cases for src/asf/m3_orchestration/planning/planner_graph.py
 # DOES NOT OWN: Production code; fixtures shared with other modules (put those in tests/conftest.py)
 # CONNECTS TO (external boundaries only):
-#   - imports from src/asf/m3_orchestration/planning/planner_graph.py: build_planner_graph, check_plan, plan_result, PlanModel (unit under test)
+#   - imports from src/asf/m3_orchestration/planning/planner_graph.py: build_planner_graph, check_plan, plan_result, PlanModel, _without_test_modules (unit under test)
 #   - imports from src/asf/contracts/errors.py: ProviderUnavailable (fake gateway failure)
 #   - imports from src/asf/contracts/requests.py: StructuredRequest (check_plan input)
 #   - emits/consumes: none
@@ -28,7 +28,7 @@ from langgraph.types import Command
 
 from asf.contracts.errors import ProviderUnavailable
 from asf.contracts.requests import StructuredRequest
-from asf.m3_orchestration.planning.planner_graph import PlanModel, build_planner_graph, check_plan, plan_result
+from asf.m3_orchestration.planning.planner_graph import PlanModel, _without_test_modules, build_planner_graph, check_plan, plan_result
 
 
 def _request(task_type: str = "new_build", reqs: tuple[str, ...] = ("REQ-1", "REQ-2")) -> dict[str, Any]:
@@ -187,3 +187,17 @@ def test_check_plan_finds_each_class_of_defect() -> None:
 def test_a_requirement_mentioned_in_acceptance_text_counts_as_covered() -> None:
     plan = {"modules": [{**_module("a", []), "acceptance": ["satisfies REQ-1 end to end"]}]}
     assert _check(plan) == []
+
+
+def test_a_module_made_only_of_test_files_is_dropped_and_its_requirements_move_to_a_real_module() -> None:
+    """The planner proposed a 'tests' module; a 7B worker was asked to rewrite the authored tests, answered blocked every time and the run stalled."""
+    plan = PlanModel.model_validate(
+        {
+            "modules": [
+                {"name": "core", "goal": "g", "files": ["src/p/core.py"], "covers": ["REQ-001"]},
+                {"name": "tests", "goal": "t", "files": ["tests/test_core.py"], "deps": ["core"], "covers": ["REQ-002"]},
+            ]
+        }
+    )
+    out = _without_test_modules(plan)
+    assert [m.name for m in out.modules] == ["core"] and out.modules[0].covers == ["REQ-001", "REQ-002"]
