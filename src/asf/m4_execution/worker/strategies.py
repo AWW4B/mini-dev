@@ -191,6 +191,7 @@ def _policy(spec: LeafTaskSpec) -> ToolOutputPolicy:
 
 
 _ACCEPTANCE_CHARS = 6000
+MAX_BLOCK_REFUSALS = 2
 
 
 def _acceptance_source(spec: LeafTaskSpec, worktree: str) -> str:
@@ -210,7 +211,8 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
     header = _header(spec, "\n\n".join(part for part in (context, _acceptance_source(spec, worktree)) if part), _TOOL_SHAPE)
     ran_tests = False
     wrote = False
-    refused_block = False
+    tests_failed = False
+    refused_blocks = 0
     policy = _policy(spec)
     calls: list[str] = []  # "Turn n: tool(args)" or a note, one per turn
     results: list[ShapedOutput | None] = []
@@ -242,9 +244,15 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
                 continue
             return f"tool_loop finished in {turn} step(s): {step.get('message', '')}"
         if action == "blocked":
-            if not wrote and not refused_block and turn < spec.step_budget.max_turns:
-                refused_block = True  # a small model reports "blocked" at turn 1 without trying (it asked for code it was told already exists)
-                calls.append(f"Turn {turn}: blocked was refused: you have not written anything yet. Write the ALLOWED FILES ({', '.join(spec.allowed_files)}), then run the tests. Report blocked only after trying.")
+            if (not wrote or tests_failed) and refused_blocks < MAX_BLOCK_REFUSALS and turn < spec.step_budget.max_turns:
+                # a small model reports "blocked" at turn 1 without trying, or after the first failing test run instead of fixing the code
+                refused_blocks += 1
+                why = (
+                    "the acceptance tests failed: read the failure output above, fix the code in your ALLOWED FILES and run the tests again"
+                    if tests_failed
+                    else f"you have not written anything yet: write the ALLOWED FILES ({', '.join(spec.allowed_files)}), then run the tests"
+                )
+                calls.append(f"Turn {turn}: blocked was refused: {why}. Report blocked only after real attempts.")
                 results.append(None)
                 continue
             raise _blocked(step)
@@ -258,8 +266,12 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
         calls.append(f"Turn {turn}: {step['tool']}({json.dumps(args)[:500]})")
         ran_tests = ran_tests or step["tool"] == "run_tests"
         wrote = wrote or step["tool"] == "write_file"
+        if step["tool"] == "write_file":
+            tests_failed = False  # the code changed: the earlier failure no longer says what the code does
         results.append(_shaped_tool(policy, executor, spec, str(step["tool"]), cast(dict[str, Any], args), worktree))
         shaped = results[-1]
+        if step["tool"] == "run_tests":
+            tests_failed = not str(getattr(shaped, "text", shaped)).startswith("[ok] (0,")
         trace_event("worker", "tool_result", task=str(spec.task_id), turn=turn, tool=step["tool"], result=getattr(shaped, "text", shaped))
     raise WorkerBlocked("SPEC_TOO_LARGE: the step budget was exhausted before the model reported done")
 

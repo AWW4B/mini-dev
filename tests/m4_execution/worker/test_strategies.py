@@ -107,7 +107,7 @@ def test_three_malformed_replies_raise_a_format_error(tmp_path: Path) -> None:
 
 def test_blocked_is_surfaced_to_the_orchestrator(tmp_path: Path) -> None:
     blocked = {"action": "blocked", "message": "CONTRACT_GAP: ledger has no refund operation"}
-    gateway = _Gateway(blocked, blocked)  # the first block before any write is pushed back once
+    gateway = _Gateway(blocked, blocked, blocked)  # a block before any write is pushed back twice
     with pytest.raises(WorkerBlocked) as info:
         _run("tool_loop", gateway, _Executor(), tmp_path)
     assert "CONTRACT_GAP" in str(info.value)
@@ -239,8 +239,29 @@ def test_a_first_blocked_before_any_write_is_pushed_back_once(tmp_path: Path) ->
     assert "blocked was refused" in gateway.prompts[1]
 
 
-def test_a_second_blocked_is_a_real_block(tmp_path: Path) -> None:
-    gateway = _Gateway({"action": "blocked", "message": "gap one"}, {"action": "blocked", "message": "CONTRACT_GAP: ledger has no refund operation"})
+def test_a_block_that_survives_the_push_backs_is_a_real_block(tmp_path: Path) -> None:
+    gateway = _Gateway({"action": "blocked", "message": "gap one"}, {"action": "blocked", "message": "gap two"}, {"action": "blocked", "message": "CONTRACT_GAP: ledger has no refund operation"})
     with pytest.raises(WorkerBlocked) as info:
         _run("tool_loop", gateway, _Executor(), tmp_path)
     assert "CONTRACT_GAP" in str(info.value)
+
+
+def test_blocked_after_a_failing_test_run_is_pushed_back_to_fix_the_code(tmp_path: Path) -> None:
+    """The 7B coder wrote the code, saw one failing test and answered blocked instead of fixing it."""
+
+    class _Failing(_Executor):
+        def invoke(self, invocation: Any, allowed_files: list[str]) -> Any:
+            result = super().invoke(invocation, allowed_files)
+            if invocation.tool == "run_tests":
+                return SimpleNamespace(status="ok", output="(1, 'FAILED tests/test_billing.py::test_a')")
+            return result
+
+    gateway = _Gateway(
+        {"action": "tool", "tool": "write_file", "args": {"rel_path": "src/billing.py", "content": "x = 1\n"}},
+        {"action": "tool", "tool": "run_tests", "args": {"selectors": ["tests/test_billing.py"]}},
+        {"action": "blocked", "message": "the test failed"},
+        {"action": "tool", "tool": "write_file", "args": {"rel_path": "src/billing.py", "content": "x = 2\n"}},
+        {"action": "done", "message": "fixed"},
+    )
+    assert "fixed" in _run("tool_loop", gateway, _Failing(), tmp_path, _spec(max_turns=8, tests=("tests/test_billing.py",)))
+    assert "the acceptance tests failed: read the failure output above" in gateway.prompts[3]
