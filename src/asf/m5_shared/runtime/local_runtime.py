@@ -63,7 +63,9 @@ class LocalRuntime:
 
         # Check resources (reject rather than overcommit VRAM)
         reading = self.probe.read()
-        if reading.vram_free_mb is not None and reading.vram_free_mb < 500:
+        # only a runtime that loads the model itself needs free VRAM: with servers already running (no backend) the model is already resident, and the
+        # check refused every attempt because the servers had taken the memory (159 MB free)
+        if self.backend is not None and reading.vram_free_mb is not None and reading.vram_free_mb < 500:
             raise AsfError(f"RESOURCE_UNAVAILABLE: insufficient VRAM ({reading.vram_free_mb} MB free)")
 
         base_url = "http://127.0.0.1:8080/v1"
