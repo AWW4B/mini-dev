@@ -45,6 +45,8 @@ _SKILL = "write-tests-from-acceptance"
 _PROMPT = (
     "Write pytest acceptance tests for this task. Test only what the acceptance criteria and the pinned contracts say, "
     "through the public interface; do not test implementation details. One file per module under tests/, named test_*.py. "
+    "Every requirement id in the criteria (REQ-004 and the like) must appear, as a comment or in a test name, next to the test that covers it: "
+    "the final traceability check looks for the id text in the test files. "
     "Answer with JSON: {{\"files\": [{{\"path\": \"tests/<path>/test_<name>.py\", \"content\": \"<complete file content>\"}}]}}.\n\n"
     "GOAL: {goal}\nACCEPTANCE CRITERIA: {criteria}\nCONTRACTS: {contracts}\nFILES UNDER TEST (do not write or copy these; only test them): {files}\n"
     "Use exactly these keys for the test files: {targets}\n{context}\n{skill}"

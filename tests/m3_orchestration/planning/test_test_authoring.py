@@ -191,3 +191,10 @@ def test_test_files_are_not_asked_to_have_tests_of_their_own() -> None:
 
     node = _node().model_copy(update={"allowed_files": ["src/a.py", "tests/test_core.py", "test_x.py", "README.md"]})
     assert _target_names(node) == ["tests/test_a.py"]
+
+
+def test_the_prompt_asks_for_the_requirement_ids_to_appear_in_the_tests(tmp_path: Path) -> None:
+    """Final acceptance looks for each REQ id in the test files; the author was never told."""
+    gateway = _Gateway()
+    _author(tmp_path, gateway)
+    assert "must appear, as a comment or in a test name" in gateway.prompts[0]

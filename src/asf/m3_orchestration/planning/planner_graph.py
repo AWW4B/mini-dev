@@ -238,7 +238,8 @@ def _task_node(run_id: str, name: str, kind: str, module: ModuleSpec | None, dep
             "parent_id": parent,
             "kind": kind,
             "goal": goal,
-            "acceptance_refs": list(module.acceptance) if module else [],
+            # the requirement ids the module covers travel with its criteria: final acceptance demands each id in a test, and nothing else told the test author which ids a module owns
+            "acceptance_refs": ([*module.acceptance, *[rid for rid in module.covers if not any(rid in line for line in module.acceptance)]] if module else []),
             "contract_refs": [f"{name}@{CONTRACT_VERSION}"] if module and module.interfaces else [],
             "deps": deps,
             "allowed_files": list(module.files) if module else [],
