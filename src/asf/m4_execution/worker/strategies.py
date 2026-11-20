@@ -207,8 +207,33 @@ def _acceptance_source(spec: LeafTaskSpec, worktree: str) -> str:
     return ("ACCEPTANCE TEST SOURCE (your code must make these pass; use the names they import):\n" + "\n".join(parts)) if parts else ""
 
 
+_EXISTING_CHARS = 3000
+
+
+def _existing_code(spec: LeafTaskSpec, worktree: str) -> str:
+    """The modules already in the worktree that this task may not write (its verified dependencies, merged in before the attempt).
+
+    Without their source the 7B coder answered 'blocked: src/wordfreq/core.py does not exist' on turn 1 although it was there: a contract
+    line says what a function is called, not that the file is present."""
+    root = Path(worktree)
+    own = {p.replace("\\", "/") for p in spec.allowed_files}
+    parts: list[str] = []
+    budget = _EXISTING_CHARS
+    for path in sorted((root / "src").rglob("*.py")) if (root / "src").is_dir() else []:
+        rel = path.relative_to(root).as_posix()
+        if rel in own or path.name == "__init__.py" or budget <= 0:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")[:budget]
+        except OSError:
+            continue
+        budget -= len(text)
+        parts.append(f"--- {rel}\n{text}")
+    return ("EXISTING CODE (already in the repository, verified; import from it, do not rewrite it):\n" + "\n".join(parts)) if parts else ""
+
+
 def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executor: ToolExecutor, context: str) -> str:
-    header = _header(spec, "\n\n".join(part for part in (context, _acceptance_source(spec, worktree)) if part), _TOOL_SHAPE)
+    header = _header(spec, "\n\n".join(part for part in (context, _existing_code(spec, worktree), _acceptance_source(spec, worktree)) if part), _TOOL_SHAPE)
     ran_tests = False
     wrote = False
     tests_failed = False

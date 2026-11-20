@@ -297,3 +297,16 @@ def test_a_queued_spec_survives_into_a_new_process_as_json() -> None:
     second, *_ = _scheduler(lambda *a: None)
     second.enqueue_json(saved)
     assert second.state_of("t1") in ("READY", "BLOCKED")
+
+
+def test_an_escalated_task_accepted_by_a_person_is_dispatched_again_with_fresh_attempts() -> None:
+    """enqueue ignores a task it holds: the accepted larger leaf of a task the worker had escalated was never run (the run idled forever)."""
+    sched, _, _, _ = _scheduler(lambda spec, lease, n: _requeue("t1"))
+    sched.enqueue(_spec("t1", max_attempts=1))
+    sched.dispatch_ready()
+    sched.wait_idle()
+    assert sched.state_of("t1") == "ESCALATED"
+    sched.reopen(_spec("t1", max_attempts=1))
+    assert sched.state_of("t1") == "READY" and sched.attempts_of("t1") == 0
+    assert sched.dispatch_ready() == 1
+    sched.close()

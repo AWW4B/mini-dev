@@ -265,3 +265,12 @@ def test_blocked_after_a_failing_test_run_is_pushed_back_to_fix_the_code(tmp_pat
     )
     assert "fixed" in _run("tool_loop", gateway, _Failing(), tmp_path, _spec(max_turns=8, tests=("tests/test_billing.py",)))
     assert "the acceptance tests failed: read the failure output above" in gateway.prompts[3]
+
+
+def test_the_source_of_modules_already_in_the_worktree_is_shown_to_the_worker(tmp_path: Path) -> None:
+    """The cli task answered 'core.py does not exist' on turn 1 although its dependency had been merged in."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "dep.py").write_text("def top_words(text):\n    return []\n", encoding="utf-8")
+    gateway = _Gateway({"action": "done", "message": "ok"})
+    _run("tool_loop", gateway, _Executor(), tmp_path, _spec(max_turns=3))
+    assert "EXISTING CODE" in gateway.prompts[0] and "def top_words(text)" in gateway.prompts[0]
