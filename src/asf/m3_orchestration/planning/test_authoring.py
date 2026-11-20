@@ -90,7 +90,9 @@ def _target_names(node: TaskNode) -> list[str]:
 
     Naming them stopped the planner model answering with the module under test (key src/pkg/core.py, body "# Placeholder") instead of tests.
     """
-    names = [f"tests/test_{PurePosixPath(f.replace(chr(92), '/')).stem}.py" for f in node.allowed_files if PurePosixPath(f).suffix == ".py"]
+    modules = [PurePosixPath(f.replace(chr(92), "/")) for f in node.allowed_files]
+    # a file that is already a test (tests/test_core.py) is what a worker writes, not a module under test: no tests/test_test_core.py
+    names = [f"tests/test_{m.stem}.py" for m in modules if m.suffix == ".py" and m.parts[0] != "tests" and not m.stem.startswith("test_")]
     return list(dict.fromkeys(names)) or ["tests/test_<name>.py"]
 
 

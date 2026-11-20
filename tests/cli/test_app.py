@@ -65,3 +65,22 @@ def test_command_registration_failures_are_not_swallowed(monkeypatch: pytest.Mon
     import asf.cli.app as app_mod
 
     assert all(hasattr(m, "register") for m in app_mod._COMMAND_MODULES)
+
+
+def test_the_console_streams_write_utf8_and_never_raise_on_model_text() -> None:
+    """`factory tasks show` crashed with UnicodeEncodeError on a non-breaking hyphen in a model-written goal."""
+    import io
+    import sys
+
+    from asf.cli.app import _utf8_streams
+
+    old = sys.stdout, sys.stderr
+    sys.stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    sys.stderr = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    try:
+        _utf8_streams()
+        print("non‑letter")
+        sys.stdout.flush()
+        assert sys.stdout.encoding.lower().replace("-", "") == "utf8"
+    finally:
+        sys.stdout, sys.stderr = old
