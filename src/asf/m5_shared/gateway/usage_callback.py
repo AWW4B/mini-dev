@@ -8,6 +8,7 @@
 #   - imports from src/asf/m5_shared/metrics/pricing.py: price_for (D-27)
 #   - imports from src/asf/m5_shared/trace.py: trace_event (every model call with tokens, latency and the limits used so far)
 #   - called by src/asf/m5_shared/gateway/gateway.py: UsageCallbackHandler
+#   - called by src/asf/m3_orchestration/run_graph.py: drain_call_metrics
 #   - called by tests/m5_shared/gateway/test_usage_callback.py: UsageCallbackHandler
 #   - emits/consumes: emits MODEL_CALL and USAGE events via MetricsCollector
 # INSTRUCTIONS (strict, imperative):
@@ -20,7 +21,7 @@
 # DONE WHEN: (1) tests/m5_shared/gateway/test_usage_callback.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/gateway/usage_callback.py` and `uv run mypy src/asf/m5_shared/gateway/usage_callback.py` are clean.
 
 import logging
-import sqlite3
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +35,17 @@ from asf.m5_shared.metrics.pricing import price_for
 from asf.m5_shared.trace import clip, trace_event
 
 logger = logging.getLogger(__name__)
+
+_pending: list[tuple[Any, ...]] = []
+_pending_lock = threading.Lock()
+
+
+def drain_call_metrics() -> list[tuple[Any, ...]]:
+    """The call_metrics rows queued by model calls since the last drain (any thread queues; the run's main thread writes them)."""
+    with _pending_lock:
+        rows = list(_pending)
+        _pending.clear()
+    return rows
 
 
 def _provider_of(serialized: dict[str, Any] | None) -> str:
@@ -186,20 +198,13 @@ class UsageCallbackHandler(BaseCallbackHandler):
             except (AttributeError, TypeError):
                 limits = {}
         if self.metrics_db is not None:
-            try:
-                conn = sqlite3.connect(str(self.metrics_db), timeout=30)
-                try:
-                    with conn:
-                        conn.execute(
-                            "INSERT INTO call_metrics (run_id, task_id, provider, model, input_tokens, output_tokens, cost, duration_ms, timestamp, role, strategy, estimated, retry_no) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (self.run_id, self.task_id, provider, model, tokens_in, tokens_out, cost, latency_ms, datetime.now(UTC).isoformat(), self.role, self.strategy,
-                             1 if metric.source == "ESTIMATED" else 0, 0),
-                        )
-                finally:
-                    conn.close()
-            except sqlite3.Error:
-                logger.warning("could not record the model call in call_metrics", exc_info=True)
+            # queued, not written here: a second connection committing to state.db made the main connection's next write fail with
+            # "database is locked" (WAL: its read snapshot was stale). The run's main thread drains the queue with its own connection.
+            with _pending_lock:
+                _pending.append(
+                    (self.run_id, self.task_id, provider, model, tokens_in, tokens_out, cost, latency_ms, datetime.now(UTC).isoformat(), self.role, self.strategy,
+                     1 if metric.source == "ESTIMATED" else 0, 0)
+                )
         trace_event(
             "gateway", "model_call", role=self.role, provider=provider, model=model, task=self.task_id, strategy=self.strategy,
             tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=latency_ms, cost=cost, prompt_chars=self._prompt_chars, prompt_tail=clip(self._prompt_preview, 300),

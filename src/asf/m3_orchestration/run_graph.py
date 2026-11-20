@@ -41,6 +41,7 @@
 #   - called by tests/m3_orchestration/test_run_graph.py: build_run_graph, start_run, resume_run
 #   - called by tests/m3_orchestration/test_e2e.py: start_run
 #   - imports from src/asf/m5_shared/trace.py: start_trace, trace_event (the run's flight recorder starts here)
+#   - imports from src/asf/m5_shared/gateway/usage_callback.py: drain_call_metrics (model calls queued by any thread are written to call_metrics here)
 #   - emits/consumes: emits RUN_STARTED, RUN_COMPLETED, emits narrative events TASK_RECEIVED, STEP_STARTED, HANDOFF_SENT, HANDOFF_RECEIVED, GATE_RESULT, DECISION_NEEDED (with causation_id set to the triggering event) via StateStore.commit
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -174,19 +175,6 @@ def _spec_file(project_root: Path, task_id: str) -> Path:
     return project_root / ".factory" / "specs" / f"{task_id}.json"
 
 
-def _save_specs(project_root: Path, leaf_ids: set[str]) -> None:
-    """Write each queued leaf spec to disk: the scheduler's queue lives in memory, and `factory run resume` is a new process."""
-    scheduler = _dep("scheduler")
-    if getattr(scheduler, "spec_json", None) is None:  # a scheduler without persistence (a test double) has nothing to save
-        return
-    for task_id in leaf_ids:
-        text = scheduler.spec_json(task_id)
-        if text is not None:
-            target = _spec_file(project_root, task_id)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text, encoding="utf-8")
-
-
 def _restore_specs(project_root: Path, store: StateStore, scheduler: Any) -> int:
     """Re-queue the leaves a previous process certified but did not finish (a resumed run used to wait for them forever)."""
     if getattr(scheduler, "enqueue_json", None) is None:
@@ -201,8 +189,28 @@ def _restore_specs(project_root: Path, store: StateStore, scheduler: Any) -> int
     return restored
 
 
+def _flush_metrics() -> None:
+    """Write the model calls queued since the last look into call_metrics, on this thread with the run's own connection."""
+    from asf.m5_shared.gateway.usage_callback import drain_call_metrics  # langchain_core: loaded when a model has been built, not before
+
+    store: StateStore | None = _dep("state_store")
+    rows = drain_call_metrics()
+    if store is None or not rows:
+        return
+    try:
+        with store.conn:
+            store.conn.executemany(
+                "INSERT INTO call_metrics (run_id, task_id, provider, model, input_tokens, output_tokens, cost, duration_ms, timestamp, role, strategy, estimated, retry_no) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+    except Exception:  # noqa: BLE001 - metrics are an aid; the run goes on
+        logger.warning("could not write %d call metrics", len(rows), exc_info=True)
+
+
 def _relay() -> None:
     """Move committed outbox rows into the event log so the trace, dashboard and web viewer can read them."""
+    _flush_metrics()
     relay: OutboxRelay | None = _dep("relay")
     if relay is not None:
         relay.relay_once()
@@ -305,7 +313,6 @@ def _node_decompose(state: RunState) -> dict[str, Any]:
     out = graph.invoke({"plan": plan, "requirement_ids": [r.req_id for r in request.requirements]}, get_config())
     report = DecompositionReport.model_validate(out["report"])
     _dep("leaf_ids", set()).update(out.get("leaves", []))
-    _save_specs(Path(state["project_root"]), set(out.get("leaves", [])))
     rid = state["run_id"]
     titles = {str(r["task_id"]): str(r["title"]) for r in store.conn.execute("SELECT task_id, title FROM tasks WHERE run_id = ?", (rid,))}
     leaves = [str(x) for x in out.get("leaves", [])]
@@ -384,6 +391,7 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
             _set_status(store, state["run_id"], "CANCELLED", "cancelled")
             return {"status": "CANCELLED", "note": "aborted by the user"}
 
+        _restore_specs(Path(state["project_root"]), store, _dep("scheduler"))  # a leaf certified by a process that stopped is queued again
         requests = driver() if driver is not None else None
         _relay()
         _narrate_progress(store, state["run_id"], seen)
@@ -391,8 +399,7 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
             graph = build_decomposition_graph(None)
             out = graph.invoke({"plan": plan, "resplit": requests.get("resplit", {}), "requirement_ids": []}, get_config())
             _dep("leaf_ids", set()).update(out.get("leaves", []))
-            _save_specs(Path(state["project_root"]), set(out.get("leaves", [])))
-
+        
         current = _root_state(store, root_id)
         if current == "INTEGRATED":
             return {"status": "RUNNING", "note": "root integrated"}
@@ -652,7 +659,7 @@ def _build_execution(components: dict[str, Any], project_root: Path, run_id: str
             memory.after_attempt(spec, run_id or None, attempt_no, routed, verdict)
         return verdict
 
-    scheduler = TaskScheduler(runtime=runtime, store=store, attempt_runner=attempt, outcome_sink=outcomes.append)
+    scheduler = TaskScheduler(runtime=runtime, store=store, attempt_runner=attempt, outcome_sink=outcomes.append, spec_dir=project_root / ".factory" / "specs")
     scheduler_box["s"] = scheduler
     components.update(scheduler=scheduler, runtime=runtime, workspace=workspace, gateway=gateway, executor=executor)
     components["integrate"] = _make_integrate(components)
