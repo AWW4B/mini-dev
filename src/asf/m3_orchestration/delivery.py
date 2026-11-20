@@ -7,6 +7,9 @@
 #   - reads <project>/.factory/state.db (tasks table: task_id, state, title) read-only
 #   - reads <project>/.factory/logs/trace.jsonl written by src/asf/m5_shared/trace.py (events of components scheduler, worker, decompose, run)
 #   - called by src/asf/cli/commands/report.py: write_delivery
+#   - called by src/asf/m3_orchestration/autonomy.py: write_delivery
+#   - called by src/asf/m3_orchestration/supervisor.py: diagnose_project
+#   - reads <project>/.factory/deliver/decisions.jsonl written by src/asf/m3_orchestration/autonomy.py
 #   - called by tests/m3_orchestration/test_delivery.py: build_report, write_delivery
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -89,6 +92,32 @@ def _diagnosis(facts: dict[str, Any]) -> tuple[str, str]:
     return ("The task did not reach a verified state; the trace holds no single clear reason.", "Read .factory/logs/trace.jsonl for this task id.")
 
 
+def diagnose_project(project_root: Path) -> list[tuple[str, str, str, str]]:
+    """(task, state, cause, probable fix) for every task that is not verified."""
+    rows = _trace(project_root)
+    found = []
+    for task_id, state, _title in _tasks(project_root):
+        if state not in _GOOD:
+            cause, fix = _diagnosis(_facts(task_id, rows))
+            found.append((task_id, state, cause, fix))
+    return found
+
+
+def _decisions_section(project_root: Path) -> list[str]:
+    """Every decision an unattended run took on its own: who took it and why. Nothing is answered silently."""
+    path = project_root / ".factory" / "deliver" / "decisions.jsonl"
+    if not path.is_file():
+        return []
+    lines = ["## Decisions taken without a person", "", "| decision | chosen | by | reason |", "|---|---|---|---|"]
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(raw)
+        except ValueError:
+            continue
+        lines.append(f"| {row.get('decision', '')} | {row.get('chosen', '')} | {row.get('by', '')} | {str(row.get('reason', row.get('note', '')))[:160]} |")
+    return [*lines, ""]
+
+
 def build_report(project_root: Path) -> str:
     """The REPORT.md text: a table of every task, then each problem with its evidence, cause and probable fix."""
     tasks = _tasks(project_root)
@@ -109,6 +138,7 @@ def build_report(project_root: Path) -> str:
         lines += [f"### {task_id} ({state})", f"- Cause: {cause}", f"- Probable fix: {fix}"]
         lines += [f"- Evidence: {item}" for item in [*facts["messages"][-3:], *facts["failures"][-2:], *facts["split_problems"][:2]]]
         lines.append("")
+    lines += _decisions_section(project_root)
     lines += ["## What is in the archive", "", "The project files as they are now (no secrets, no run data). Tasks listed above as problems may be missing or incomplete.", ""]
     return "\n".join(lines)
 

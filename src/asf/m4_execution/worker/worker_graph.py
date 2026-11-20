@@ -59,8 +59,8 @@ logger = logging.getLogger(__name__)
 
 Emit = Callable[[str, dict[str, Any]], None]
 _MAX_FILE_CHARS = 20000
-HELPER_FROM_ATTEMPT = 2  # attempt 1 is the small local coder; from attempt 2 the planner tier takes over the coding
-HELPER_ROLE = "T3"
+# the help ladder: attempt 1 the small local coder, attempt 2 the 20B (reviewer role), attempt 3 the 120B (planner tier) once; then the failure is accepted and reported
+HELP_LADDER = {2: "reviewer", 3: "T3"}
 
 
 class WorkerError(AsfError):
@@ -213,7 +213,7 @@ def run_attempt(
 
     publish("STEP_STARTED", {"strategy": strategy, "summary": f"working in {worktree}"})
     with _Heartbeat(runtime, lease):
-        helper = HELPER_ROLE if attempt_no >= HELPER_FROM_ATTEMPT else None
+        helper = HELP_LADDER.get(attempt_no)
         if helper is not None:
             trace_event("worker", "helper_model", task=task_id, attempt=attempt_no, role=helper, why="the small coder did not pass in earlier attempts")
         report = run_strategy(strategy, spec, worktree, gateway=gateway, executor=executor, context=context, model_role=helper)
