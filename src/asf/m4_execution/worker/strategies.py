@@ -58,7 +58,8 @@ _SYSTEM = (
     "You are a coding worker. Work only on the files listed under ALLOWED FILES; writes anywhere else are denied. "
     "Reply with ONE JSON object and nothing else.\n"
     "{shape}\n"
-    "Use done when the task is complete, blocked when you cannot proceed (missing context or a gap in the contract)."
+    "Use done when the task is complete, blocked only when you tried and cannot proceed (a real gap in the contract). "
+    "The modules under DEPENDENCY CONTRACTS already exist: import them by those signatures and never write them again. Create every ALLOWED FILE that does not exist yet."
 )
 _TOOL_SHAPE = (
     'Shapes: {"action": "tool", "tool": "<name>", "args": {...}} | {"action": "done", "message": "<self-report>"} | '
@@ -208,6 +209,8 @@ def _acceptance_source(spec: LeafTaskSpec, worktree: str) -> str:
 def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executor: ToolExecutor, context: str) -> str:
     header = _header(spec, "\n\n".join(part for part in (context, _acceptance_source(spec, worktree)) if part), _TOOL_SHAPE)
     ran_tests = False
+    wrote = False
+    refused_block = False
     policy = _policy(spec)
     calls: list[str] = []  # "Turn n: tool(args)" or a note, one per turn
     results: list[ShapedOutput | None] = []
@@ -239,6 +242,11 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
                 continue
             return f"tool_loop finished in {turn} step(s): {step.get('message', '')}"
         if action == "blocked":
+            if not wrote and not refused_block and turn < spec.step_budget.max_turns:
+                refused_block = True  # a small model reports "blocked" at turn 1 without trying (it asked for code it was told already exists)
+                calls.append(f"Turn {turn}: blocked was refused: you have not written anything yet. Write the ALLOWED FILES ({', '.join(spec.allowed_files)}), then run the tests. Report blocked only after trying.")
+                results.append(None)
+                continue
             raise _blocked(step)
         if action != "tool" or not isinstance(step.get("tool"), str):
             calls.append(f"Turn {turn}: invalid action {action!r}; use tool, done or blocked.")
@@ -249,6 +257,7 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
             args = _test_selectors(spec, cast(dict[str, Any], args))
         calls.append(f"Turn {turn}: {step['tool']}({json.dumps(args)[:500]})")
         ran_tests = ran_tests or step["tool"] == "run_tests"
+        wrote = wrote or step["tool"] == "write_file"
         results.append(_shaped_tool(policy, executor, spec, str(step["tool"]), cast(dict[str, Any], args), worktree))
         shaped = results[-1]
         trace_event("worker", "tool_result", task=str(spec.task_id), turn=turn, tool=step["tool"], result=getattr(shaped, "text", shaped))
