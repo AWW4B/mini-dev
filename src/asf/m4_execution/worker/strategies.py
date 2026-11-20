@@ -103,6 +103,7 @@ def _salvage_write(text: str) -> dict[str, Any] | None:
     if path is None or body is None or '"write_file"' not in text:
         return None
     raw = re.sub(r"\\(.)", lambda m: _UNESCAPES.get(m.group(1), "\\" + m.group(1)), body.group(1))
+    raw = re.sub(r'"\s*[}\]`]*\s*$', "", raw)  # the JSON's closing quote and braces are not part of the file (a real run wrote '"}' as the last line of cli.py)
     return {"action": "tool", "tool": "write_file", "args": {"rel_path": path.group(1), "content": raw}}
 
 

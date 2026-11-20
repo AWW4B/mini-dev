@@ -307,3 +307,14 @@ def test_a_helper_attempt_asks_the_bigger_tier_while_tools_stay_the_workers(tmp_
     spec = _spec(max_turns=2)
     run_strategy("tool_loop", spec, str(tmp_path), gateway=gateway, executor=_Executor(), model_role="T3")  # type: ignore[arg-type]
     assert roles == ["T3"]
+
+
+def test_a_salvaged_write_does_not_keep_the_json_tail_in_the_file(tmp_path: Path) -> None:
+    """A real run left '\"}' as the last line of cli.py and every test then failed on a SyntaxError."""
+    tail = chr(34) + "}"
+    reply = '{"action": "write_file", "rel_path": "src/billing.py", "content": "def f():\n    print(f"E: {1}")\n' + tail + "\n" + tail
+    gateway = _Gateway(reply, {"action": "done", "message": "ok"})
+    executor = _Executor()
+    _run("tool_loop", gateway, executor, tmp_path, _spec(max_turns=4))
+    args = next(call[1] for call in executor.calls if call[0] == "write_file")
+    assert args["content"].endswith("\n") and not args["content"].rstrip().endswith("}") and "def f():" in args["content"]
