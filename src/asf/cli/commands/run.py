@@ -117,15 +117,22 @@ def _gateway(profile: str, models: dict[str, str], strategies: dict[str, str]) -
     return gateway
 
 
+def _default_profile() -> str:
+    """The active_profile of models.toml (a run without --profile used to fall back to "hybrid" and ignore it)."""
+    from asf.m5_shared.gateway.gateway import ModelGateway
+
+    return ModelGateway.default_profile_name()
+
+
 def _overrides(profile: str | None, model: list[str], strategy: list[str], local_tests: bool) -> dict[str, Any]:
     models, strategies = _pairs(model, "--model"), _pairs(strategy, "--strategy")
     try:
-        gateway = _gateway(profile or "hybrid", models, strategies)
+        gateway = _gateway(profile or _default_profile(), models, strategies)
     except ConfigError:
         raise
     except Exception as err:  # noqa: BLE001 - provider construction raises many types; the fix is always the model setup
         raise ConfigError(f"The model gateway could not be set up ({err}). Run `factory models init` and `factory doctor`.") from err
-    return {"gateway": gateway, "profile_name": profile or "hybrid", "model_overrides": models, "strategy_overrides": strategies, "allow_local_tests": local_tests}
+    return {"gateway": gateway, "profile_name": profile or _default_profile(), "model_overrides": models, "strategy_overrides": strategies, "allow_local_tests": local_tests}
 
 
 def run_start(

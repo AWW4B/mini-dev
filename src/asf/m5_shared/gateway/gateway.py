@@ -71,6 +71,11 @@ class ModelGateway:
         self.providers = {}
         self._load_config()
 
+    @staticmethod
+    def default_profile_name() -> str:
+        """The profile named by ``active_profile`` in models.toml: what a run uses when no --profile is given (and when it is resumed)."""
+        return str(load_layered("models").get("active_profile") or "hybrid")
+
     def _load_config(self) -> None:
         data: dict[str, Any] = load_layered("models")  # packaged defaults, then the user's models.toml, then FACTORY_* variables
 
