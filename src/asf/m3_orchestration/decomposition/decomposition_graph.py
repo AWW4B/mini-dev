@@ -67,6 +67,7 @@ class DecompositionState(TypedDict, total=False):
     plan: dict[str, Any]
     requirement_ids: list[str]
     resplit: dict[str, str]
+    force_leaf: list[str]
     seeded: bool
     leaves: list[str]
     suspended: list[str]
@@ -204,6 +205,19 @@ def _step(engine: _Engine, node: TaskNode, resplit_evidence: str | None) -> tupl
         node = transition(node, TaskState.SPLITTING, "feed the validator errors back")
 
 
+def _force_leaf(engine: _Engine, node: TaskNode, why: str) -> str:
+    """The user answered a decision about a node the engine could not size or split (accept a larger leaf, or it was clarified):
+    certify it as a leaf as it is. Before this, the answer was recorded and nothing happened, and the run waited forever."""
+    node = transition(node, TaskState.SIZING, why)
+    spec = certify_leaf(node, engine.base_commit, engine.parent_branch, registry=engine.registry, authoring=engine.authoring)
+    trace_event("decompose", "forced_leaf", task=str(node.id), why=why, tests=list(spec.acceptance_test_refs), capsules=len(spec.capsules))
+    node = transition(node, TaskState.LEAF_CERTIFIED, why).model_copy(update={"kind": "leaf"})
+    engine.frontier.update(node)
+    if engine.scheduler is not None:
+        engine.scheduler.enqueue(spec)
+    return str(node.id)
+
+
 def _node_seed(state: DecompositionState) -> dict[str, Any]:
     engine = _Engine()
     if state.get("seeded"):
@@ -226,6 +240,12 @@ def _node_iterate(state: DecompositionState) -> dict[str, Any]:
     if created_total >= engine.max_nodes:
         return {"stop": "budget"}
 
+    for node_id in state.get("force_leaf", []):
+        parked = engine.frontier.get(node_id)
+        if parked is None:
+            logger.warning("an answer was given for unknown node %s", node_id)
+            continue
+        leaves.append(_force_leaf(engine, parked, "accepted as a leaf after the user's answer"))
     work: list[tuple[TaskNode, str | None]] = []
     for node_id, evidence in state.get("resplit", {}).items():  # nodes that failed for size reasons come back first
         failed = engine.frontier.get(node_id)
@@ -243,7 +263,7 @@ def _node_iterate(state: DecompositionState) -> dict[str, Any]:
         leaves += new_leaves
         suspended += new_suspended
         created_total += created
-    return {"leaves": leaves, "suspended": list(dict.fromkeys(suspended)), "nodes_created": created_total, "iterations": state.get("iterations", 0) + 1, "stop": "", "resplit": {}}
+    return {"leaves": leaves, "suspended": list(dict.fromkeys(suspended)), "nodes_created": created_total, "iterations": state.get("iterations", 0) + 1, "stop": "", "resplit": {}, "force_leaf": []}
 
 
 def _after_iterate(state: DecompositionState) -> str:
