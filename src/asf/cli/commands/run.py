@@ -36,6 +36,7 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/cli/commands/test_run.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/cli/commands/run.py` and `uv run mypy src/asf/cli/commands/run.py` are clean.
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -249,8 +250,10 @@ def run_cancel_task(run_id: str, task_id: str) -> int:
 def run_resume(run_id: str) -> int:
     """Continue a paused run, or a run whose decision has been answered, from its checkpoint."""
     renderer = renderer_for(default_output())
-    overrides = _overrides(None, [], [], False)
     store = open_store()
+    row = store.conn.execute("SELECT payload FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+    saved = str(json.loads(row["payload"]).get("profile") or "") if row is not None and row["payload"] else ""
+    overrides = _overrides(saved or None, [], [], False)  # the profile the run started with, not today's default
     resume_run(run_id, project_root(), {**overrides, "state_store": store})
     return _report_state(renderer, run_id)
 

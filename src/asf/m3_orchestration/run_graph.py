@@ -241,6 +241,7 @@ def _node_create_run(state: RunState) -> dict[str, Any]:
                         "request_id": request.request_id,
                         "mode": select_mode(request).value,
                         "budget": budget.model_dump(mode="json"),
+                        "profile": str(_dep("profile_name") or ""),  # `factory run resume` must use the profile the run started with
                     },
                     "events": [_event(run_id, "run_started", {"request_id": request.request_id, "mode": select_mode(request).value})],
                 }
@@ -556,7 +557,7 @@ def default_components(project_root: Path, run_id: str, overrides: dict[str, Any
     components["control"] = overrides.get("control") or control
     components["relay"] = overrides.get("relay") or OutboxRelay(store, EventLog(store.conn, components["blobs"]))
     components["supervisor"] = supervisor
-    for name in ("gateway", "registry", "scheduler", "runtime", "driver", "regression", "acceptance", "authoring", "budget", "sleep", "max_ticks", "base_commit", "parent_branch", "lazy", "planner_strategy", "allow_local_tests"):
+    for name in ("gateway", "registry", "scheduler", "runtime", "driver", "regression", "acceptance", "authoring", "budget", "sleep", "max_ticks", "base_commit", "parent_branch", "lazy", "planner_strategy", "allow_local_tests", "profile_name"):
         if name in overrides:
             components[name] = overrides[name]
     if "scheduler" not in components and (project_root / ".git").exists():
