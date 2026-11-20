@@ -228,3 +228,8 @@ def test_the_type_check_tolerates_imports_it_cannot_resolve_in_a_generated_layou
     """mypy on src/pkg/cli.py failed on `import pkg.core` in a project without __init__.py or a mypy config, so every attempt was a LOCAL_BUG."""
     source = (Path(__file__).resolve().parents[3] / "src" / "asf" / "m4_execution" / "verification" / "gate.py").read_text(encoding="utf-8")
     assert '"mypy", "--ignore-missing-imports"' in source
+
+
+def test_a_project_without_a_ruff_config_is_linted_for_real_errors_only() -> None:
+    source = (Path(__file__).resolve().parents[3] / "src" / "asf" / "m4_execution" / "verification" / "gate.py").read_text(encoding="utf-8")
+    assert '"--isolated", "--select", "E9,F63,F7,F82"' in source and "has_config" in source

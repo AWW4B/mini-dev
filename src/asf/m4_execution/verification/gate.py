@@ -182,7 +182,11 @@ def verify_change_set(
     python_files = [p for p in change.files_touched if p.endswith(".py")]
     commands: list[tuple[str, list[str]]] = []
     if python_files:
-        commands.append(("lint", ["uv", "run", "ruff", "check", *python_files]))
+        # a project without its own ruff config is checked for real errors only (syntax, undefined names), not for style: otherwise a
+        # config found further up the folder tree decided whether generated code passed (RUF100 on a "noqa" blocked every attempt)
+        has_config = any((Path(worktree) / name).is_file() for name in ("ruff.toml", ".ruff.toml", "pyproject.toml"))
+        lint = ["uv", "run", "ruff", "check"] + ([] if has_config else ["--isolated", "--select", "E9,F63,F7,F82"])
+        commands.append(("lint", [*lint, *python_files]))
         # a generated project has no mypy config and often no __init__.py: without these flags a module importing its sibling failed with
         # "Cannot find implementation or library stub" and the attempt was sent back as a LOCAL_BUG forever
         commands.append(("types", ["uv", "run", "mypy", "--ignore-missing-imports", "--follow-imports=silent", *python_files]))
