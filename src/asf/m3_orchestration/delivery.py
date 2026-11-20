@@ -123,7 +123,7 @@ def write_delivery(project_root: Path) -> tuple[Path, Path]:
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
         for path in sorted(project_root.rglob("*")):
             rel = path.relative_to(project_root)
-            if not path.is_file() or path.name in _SKIP_FILES or path.suffix == ".pyc" or any(part in _SKIP_DIRS for part in rel.parts):
+            if not path.is_file() or path.name in _SKIP_FILES or path.suffix == ".pyc" or path.name.startswith("AUTOPILOT") or any(part in _SKIP_DIRS for part in rel.parts):
                 continue
             bundle.write(path, rel.as_posix())
         bundle.write(report, "REPORT.md")
