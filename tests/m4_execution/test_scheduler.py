@@ -211,7 +211,7 @@ def test_context_overflow_and_blocked_workers_become_outcomes() -> None:
 
     sched, _, outcomes, _ = _scheduler(runner, _Runtime(slots=2))
     for name in ("o", "g"):
-        sched.enqueue(_spec(name))
+        sched.enqueue(_spec(name, max_attempts=1))  # a block on the last attempt is a real block
     sched.dispatch_ready()
     sched.wait_idle()
     sched.enqueue(_spec("s"))
@@ -309,4 +309,21 @@ def test_an_escalated_task_accepted_by_a_person_is_dispatched_again_with_fresh_a
     sched.reopen(_spec("t1", max_attempts=1))
     assert sched.state_of("t1") == "READY" and sched.attempts_of("t1") == 0
     assert sched.dispatch_ready() == 1
+    sched.close()
+
+
+def test_a_block_before_the_last_attempt_is_retried_so_the_bigger_models_get_their_turn() -> None:
+    """One 'blocked' from the 7B coder used to escalate the task at once; the help ladder (20B, then 120B) was never reached."""
+    calls: list[int] = []
+
+    def runner(spec: Any, lease: Any, n: int) -> None:
+        calls.append(n)
+        raise WorkerBlocked("the coder gave up")
+
+    sched, _, outcomes, _ = _scheduler(runner)
+    sched.enqueue(_spec("t1", max_attempts=3))
+    for _ in range(3):
+        sched.dispatch_ready()
+        sched.wait_idle()
+    assert calls == [1, 2, 3] and [o.failure_class.value for o in outcomes] == ["CONTRACT_GAP"]
     sched.close()
