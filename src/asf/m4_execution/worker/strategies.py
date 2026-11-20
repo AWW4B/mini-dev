@@ -259,6 +259,7 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
     ran_tests = False
     wrote = False
     tests_failed = False
+    last_failure = ""
     refused_blocks = 0
     policy = _policy(spec)
     calls: list[str] = []  # "Turn n: tool(args)" or a note, one per turn
@@ -295,7 +296,7 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
                 # a small model reports "blocked" at turn 1 without trying, or after the first failing test run instead of fixing the code
                 refused_blocks += 1
                 why = (
-                    "the acceptance tests failed: read the failure output above, fix the code in your ALLOWED FILES and run the tests again"
+                    "the acceptance tests failed. Failure output:\n" + last_failure[-1500:] + "\nReply now with a write_file action holding the corrected COMPLETE file from your ALLOWED FILES, then run the tests again"
                     if tests_failed
                     else f"you have not written anything yet: write the ALLOWED FILES ({', '.join(spec.allowed_files)}), then run the tests"
                 )
@@ -314,11 +315,13 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
         ran_tests = ran_tests or step["tool"] == "run_tests"
         wrote = wrote or step["tool"] == "write_file"
         if step["tool"] == "write_file":
+            refused_blocks = 0  # a new write earns the coder new push-backs
             tests_failed = False  # the code changed: the earlier failure no longer says what the code does
         results.append(_shaped_tool(policy, executor, spec, str(step["tool"]), cast(dict[str, Any], args), worktree))
         shaped = results[-1]
         if step["tool"] == "run_tests":
-            tests_failed = not str(getattr(shaped, "text", shaped)).startswith("[ok] (0,")
+            last_failure = str(getattr(shaped, "text", shaped))
+            tests_failed = not last_failure.startswith("[ok] (0,")
         trace_event("worker", "tool_result", task=str(spec.task_id), turn=turn, tool=step["tool"], result=getattr(shaped, "text", shaped))
     raise WorkerBlocked("SPEC_TOO_LARGE: the step budget was exhausted before the model reported done")
 
