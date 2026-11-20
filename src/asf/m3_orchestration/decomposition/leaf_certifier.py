@@ -89,5 +89,6 @@ def certify_leaf(
             "model_role": "T2",
             "base_commit": commit,
             "parent_branch": parent_branch,
+            "depends_on": list(dict.fromkeys(str(d) for d in node.deps)),
         }
     )

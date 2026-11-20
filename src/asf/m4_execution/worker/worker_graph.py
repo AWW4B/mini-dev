@@ -19,6 +19,7 @@
 #   - called by src/asf/m4_execution/scheduler.py: run_attempt
 #   - called by tests/m4_execution/worker/test_worker_graph.py: run_attempt, WorkerError
 #   - called by src/asf/m3_orchestration/run_graph.py: run_attempt
+#   - imports from src/asf/m5_shared/trace.py: trace_event (dependencies merged into a worktree)
 #   - emits/consumes: emits TASK_RECEIVED, STEP_STARTED, HANDOFF_SENT (worker -> gate); tool events come from ToolExecutor
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -51,6 +52,7 @@ from asf.m4_execution.worker.strategies import WorkerStrategyName, run_strategy
 from asf.m5_shared.context.context_service import ContextService
 from asf.m5_shared.gateway.gateway import ModelGateway
 from asf.m5_shared.tools.executor import ToolExecutor
+from asf.m5_shared.trace import trace_event
 from asf.m5_shared.workspace.workspace import Workspace
 
 logger = logging.getLogger(__name__)
@@ -139,7 +141,26 @@ def _context_text(
 _NOT_A_CHANGE = (":(exclude)**/__pycache__/**", ":(exclude)*.pyc", ":(exclude).pytest_cache/**", ":(exclude).mypy_cache/**", ":(exclude).ruff_cache/**")
 
 
-def _commit_and_describe(workspace: Workspace, spec: LeafTaskSpec, worktree: str, attempt_no: int) -> tuple[str, list[str]]:
+def _merge_dependencies(workspace: Workspace, spec: LeafTaskSpec, worktree: str) -> str:
+    """Bring the verified code of the tasks this one depends on into its worktree; return the commit its own changes are measured from.
+
+    A leaf is cut from the commit it was certified at, which does not contain its dependencies' code (those live on their own task
+    branches until the parent is integrated), so a cli task importing the core module failed on ImportError in every attempt.
+    """
+    wt = Path(worktree)
+    for dep in getattr(spec, "depends_on", []):
+        branch = f"task/{dep}"
+        code, _, err = workspace._run_git(["-c", "user.name=ASF", "-c", "user.email=asf@factory.local", "merge", "--no-edit", branch], cwd=wt)
+        if code != 0:
+            workspace._run_git(["merge", "--abort"], cwd=wt)
+            trace_event("worker", "dependency_not_merged", task=str(spec.task_id), dependency=dep, error=err)
+        else:
+            trace_event("worker", "dependency_merged", task=str(spec.task_id), dependency=dep)
+    code, head, _ = workspace._run_git(["rev-parse", "HEAD"], cwd=wt)
+    return head.strip() if code == 0 and head.strip() else spec.base_commit
+
+
+def _commit_and_describe(workspace: Workspace, spec: LeafTaskSpec, worktree: str, attempt_no: int, base: str | None = None) -> tuple[str, list[str]]:
     """Commit the attempt on its task branch; return (diff blob ref, files touched since the base commit)."""
     wt = Path(worktree)
     # bytecode and test caches are by-products of running the tests, not changes: without this every attempt that ran a test was a policy violation
@@ -150,8 +171,9 @@ def _commit_and_describe(workspace: Workspace, spec: LeafTaskSpec, worktree: str
             ["-c", "user.name=ASF Worker", "-c", "user.email=worker@asf.local", "commit", "-m", f"task {spec.task_id} attempt {attempt_no}"],
             cwd=wt,
         )
-    _, names, _ = workspace._run_git(["diff", "--name-only", spec.base_commit, "HEAD"], cwd=wt)
-    _, diff, _ = workspace._run_git(["diff", spec.base_commit, "HEAD"], cwd=wt)
+    start = base or spec.base_commit
+    _, names, _ = workspace._run_git(["diff", "--name-only", start, "HEAD"], cwd=wt)
+    _, diff, _ = workspace._run_git(["diff", start, "HEAD"], cwd=wt)
     return workspace.blobs.put(diff.encode("utf-8")), [n for n in names.splitlines() if n.strip()]
 
 
@@ -183,6 +205,7 @@ def run_attempt(
 
     publish("TASK_RECEIVED", {"goal_summary": spec.goal[:200], "from_role": "scheduler"})
     worktree = _create_worktree(workspace, spec)
+    base = _merge_dependencies(workspace, spec, worktree)
     service = context_service if context_service is not None else ContextService()
     context = _context_text(spec, lease, worktree, service, failure_evidence, memory_items)
 
@@ -190,7 +213,7 @@ def run_attempt(
     with _Heartbeat(runtime, lease):
         report = run_strategy(strategy, spec, worktree, gateway=gateway, executor=executor, context=context)
 
-    diff_ref, touched = _commit_and_describe(workspace, spec, worktree, attempt_no)
+    diff_ref, touched = _commit_and_describe(workspace, spec, worktree, attempt_no, base)
     change = ChangeSet.model_validate(
         {
             "task_id": task_id,
