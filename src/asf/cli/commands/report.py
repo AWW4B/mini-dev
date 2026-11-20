@@ -8,6 +8,7 @@
 #   - imports from src/asf/m5_shared/workspace/blobs.py: BlobStore (report blob)
 #   - imports from src/asf/cli/ui/render.py: OutputMode, Renderer (rich / plain / JSON output)
 #   - imports from src/asf/cli/context.py: EXIT_OK, EXIT_USER, guard, open_store, renderer_for, resolve_run_id (shared CLI plumbing)
+#   - imports from src/asf/m3_orchestration/delivery.py: write_delivery (`factory deliver`: REPORT.md and product.zip)
 #   - called by src/asf/cli/app.py: register
 #   - called by tests/cli/commands/test_report.py: report, register
 #   - emits/consumes: none
@@ -31,7 +32,8 @@ from pathlib import Path
 
 import typer
 
-from asf.cli.context import EXIT_OK, EXIT_USER, guard, open_store, renderer_for, resolve_run_id
+from asf.cli.context import EXIT_OK, EXIT_USER, guard, open_store, project_root, renderer_for, resolve_run_id
+from asf.m3_orchestration.delivery import write_delivery
 from asf.m5_shared.state_store.store import StateStore
 from asf.m5_shared.workspace.blobs import BlobStore
 
@@ -75,8 +77,20 @@ def report(run_id: str, out: Path | None = None) -> int:
     return EXIT_OK
 
 
+def deliver() -> int:
+    """Write REPORT.md (every problem, its cause and a probable fix) and product.zip (the project's files) for this project, finished run or not."""
+    renderer = renderer_for("plain")
+    report_path, archive = write_delivery(project_root())
+    renderer.message(f"Report: {report_path}; product archive: {archive}", "success")
+    return EXIT_OK
+
+
 def register(app: typer.Typer) -> None:
     """Attach the `report` command(s) to the root Typer app."""
+
+    @app.command("deliver", help="Write REPORT.md and product.zip (the project's files) under .factory/deliver, even when the run did not finish.")
+    def deliver_cmd() -> None:
+        raise typer.Exit(code=guard(deliver))
 
     @app.command("report", help="Print or save the final report of a run.")
     def report_cmd(
