@@ -319,6 +319,10 @@ def _step_understand(state: PipelineState) -> dict[str, Any]:
         project_id=state.get("project_id", "default"),
     )
 
+    hint = state.get("mode_hint")
+    if hint:  # the requester's explicit --mode beats the keyword guess ("error" in a spec made a new build a debug run)
+        structured = structured.model_copy(update={"task_type": type(structured.task_type)(getattr(hint, "value", hint))})
+
     events = _narrative_event(
         state,
         EventKind.STEP_STARTED,
