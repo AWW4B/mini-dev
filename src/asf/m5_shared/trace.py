@@ -47,6 +47,7 @@ PREVIEW_CHARS = 600
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]  # src/asf
 _run_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("asf_trace_run", default=None)
 _lock = threading.Lock()
+_busy = threading.local()  # redaction can log a warning, which the log handler would trace, which redacts again: never re-enter
 _state: dict[str, Any] = {"jsonl": None, "text": None, "paths": None, "t0": 0.0, "seq": 0, "handler": None, "run": None, "monitor": False}
 
 
@@ -111,18 +112,24 @@ def _write(component: str, event: str, data: dict[str, Any], where: str) -> None
 
 def trace_event(component: str, event: str, **data: Any) -> None:
     """Record one event with the file, line and function that called this."""
-    if _state["jsonl"] is None:
+    if _state["jsonl"] is None or getattr(_busy, "on", False):
         return
+    _busy.on = True
     try:
         _write(component, event, {k: clip(v) for k, v in data.items()}, _where(2))
     except Exception:  # noqa: BLE001 - tracing must never raise into the code it observes
         return
+    finally:
+        _busy.on = False
 
 
 class _LogHandler(logging.Handler):
     """Every stdlib log record of the factory (warnings, errors with their traceback) goes into the trace with its own call site."""
 
     def emit(self, record: logging.LogRecord) -> None:
+        if getattr(_busy, "on", False):
+            return
+        _busy.on = True
         try:
             if not record.name.startswith("asf"):
                 return
@@ -137,6 +144,8 @@ class _LogHandler(logging.Handler):
             _write("log", record.levelname.lower(), data, f"{shown}:{record.lineno} {record.funcName}")
         except Exception:  # noqa: BLE001
             return
+        finally:
+            _busy.on = False
 
 
 def _start_call_monitor() -> None:

@@ -89,3 +89,19 @@ def test_nothing_is_written_without_a_trace_and_off_disables_it(tmp_path: Path, 
     trace_event("demo", "ignored")
     assert not (tmp_path / ".factory" / "logs" / "trace.jsonl").exists()
     set_run(None)
+
+
+def test_a_log_record_raised_while_redacting_does_not_recurse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With the trace on, a failing redaction (which logs) hung the process: the log handler redacted again, forever."""
+    import asf.m5_shared.trace as trace
+
+    path = start_trace(tmp_path, "r")
+
+    def broken(text: str) -> str:
+        logging.getLogger("asf.redaction").warning("redaction failed")
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(trace, "redact_text", broken)
+    trace_event("demo", "x", text="hello")
+    logging.getLogger("asf.demo").warning("still fine")
+    assert path.exists()
