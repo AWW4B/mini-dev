@@ -17,41 +17,44 @@ ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable mes
 DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for this file.
 -->
 
-# First real run: findings (wordfreq mini project)
+# First real runs: findings, the trace logger and the dummy profile
 
-A small spec (`wordfreq`, a word-frequency CLI) was run through the factory with the real models: T1 Qwen3-1.7B on CPU, T2
-Qwen2.5-Coder-7B on the GPU (both started by `LlamaServerBackend`), T3 and reviewer on Groq (`openai/gpt-oss-120b`, `gpt-oss-20b`),
-Gemini as the last fallback, five Groq keys rotating. The detailed per-step log of the last run is `RUN_REPORT.txt` in the demo project.
+## How to see everything a run did
+- Every run writes `<project>/.factory/logs/trace.jsonl` (machine readable) and `trace.log` (readable): one line per event with the
+  component, the event, the **file:line and function that produced it**, the run, the task, the thread and a data payload.
+- It records: model routes and every model call (role, provider, model, purpose, tokens in/out, latency, cost, prompt tail, reply, and the
+  **limits used so far**: remote tokens, local tokens, API spend against their caps), every state commit, every tool call with its
+  arguments and output, scheduler task states and attempts, worker turns, memory reads and writes, decisions asked and answered,
+  decomposition sizing and splits, planner critiques, the run's narrative lines and every library log record with its traceback.
+- `FACTORY_TRACE=calls` also records every function call and its duration inside the asf package (large; for hunting a hang);
+  `FACTORY_TRACE=off` disables it.
+- Model calls are also stored in `call_metrics` (`factory stats`), attributed to their task and labelled with their purpose.
+
+## Running the whole flow without a model
+`factory run start --file SPEC.md --mode new_build --profile dummy` uses a deterministic stand-in model for every role (no network, no
+key, no cost): a planner that builds modules from the files the requirements name, a rubric, test authoring, a worker that writes files
+and runs the tests, a classifier and a reviewer. It exists to fix the flow; real models then only change quality.
 
 ## Fixed (each on its own branch, merged to local main, with a test)
-1. `--file` attachments reached the planner as an empty request (blob refs were never read back).
-2. The tiny model's prompt rewrite added chatter that became requirements; it is now trusted only if it keeps every `code` token.
-3. `--mode` was ignored in favour of a keyword guess.
-4. The tiny model's rubric stalled runs (ambiguity 1.0, coupling 0.8-0.95 for simple tasks); its scores are now bounded by a heuristic.
-5. Test authoring: a dict keyed by path made the planner model return the module under test; it now returns a list of {path, content};
-   it re-asks twice on bad paths instead of aborting; names the test files; skips files that already are tests.
-6. Strict `json_schema` refusals fall back to tool calling; a 429 moves to the next key at once; remote calls time out after 60 s.
-7. `run resume` ignored `active_profile` (it used "hybrid").
-8. The 7B coder answers `{"action": "write_file", ...}`; read as a tool call. `done` is refused until the acceptance tests ran; the
-   acceptance test source is put in the prompt.
-9. `factory tasks show` crashed on a non-breaking hyphen (Windows code page); the CLI writes UTF-8.
-10. The run recorded no planner/decomposer/worker events, so the web viewer was empty; the run now narrates paired hand-offs.
-11. Queued leaf specs are saved to `.factory/specs` and re-queued by `run resume` (the scheduler queue was in memory only).
-12. Groq first for the planner (Gemini took 20-110 s per call); Gemini model name updated.
+Intake and planning: attachments read back from blobs; the tiny model's rewrite is trusted only if it keeps every code token; `--mode`
+wins over the keyword guess; requirement ids travel with each module's criteria and the test author is told to cite them (final
+acceptance looks for each id in the tests); the contract registry is created, so planned signatures reach workers as capsules.
+Decomposition: a tiny model's rubric can only nudge a heuristic score; answers to the decomposer's questions (accept a larger leaf,
+clarified, abandon) are applied.
+Worker and gate: the acceptance test source is in the prompt; `done` is refused until tests ran; a tool name in `action` is read as that
+tool call; the local coder may run tests and the linter (the prompt offered them and the registry denied them); bytecode and caches are not
+changes; a leaf that depends on others starts with their verified code merged in; mypy ignores imports it cannot resolve and ruff checks
+for real errors only when the project has no ruff config; free VRAM is only required when the runtime loads the model itself.
+Gateway and keys: several keys per provider with ordered fallbacks; strict json_schema refusals fall back to tool calling; a 429 moves to
+the next key; remote calls time out after 60 s; one budget per run; the run remembers its profile and resume uses it.
+Resume and state: queued leaf specs are saved when queued and re-queued by the resuming process; model-call metrics are queued and written
+by the run's own connection (a second connection broke the main one with "database is locked"); the trace does not re-enter when
+redaction logs (that hung the process).
+Console: output is UTF-8 (a non-breaking hyphen crashed `tasks show`).
 
-## Open (found, not fixed)
-- **A resolved `manual_split` or `clarify` decision from the decomposer is never applied.** `accept_larger_leaf` leaves the node ESCALATED
-  and the run waits forever; only the escalation handler's own manual_split path is consumed. Needs: on resume, apply the answer
-  (accept -> certify the node as a leaf, abandon -> ABANDONED, clarified -> back to sizing).
-- **Task detail is lost between spec and worker.** The worker sees "Provide core functionality for word frequency analysis" and the
-  acceptance test source, but not `top_words(text, n)`: capsules are empty and the requirement lines do not reach the leaf. The 7B then
-  invents names. Pin the requirement text (or signatures) into the leaf spec or the semantic memory layer.
-- The 7B coder through the JSON tool protocol is weak (triple-quoted JSON strings, invented names). Consider `whole_file_edit`, a larger
-  local model, or escalating a failed leaf to the planner tier once.
-- `call_metrics` stays empty and `budget.used_local_tokens` stays 0 after real calls.
-- First call to each provider took 15-70 s (cause not found; possibly IPv6 fallback).
-- Both llama-servers write one shared `llama-server.log` (interleaved).
-- A second `run resume` running at the same time produced "database is locked" in the broker.
-- The planner's opening events are narrated twice after a resume (the node re-runs).
-- The run process exits at the first human decision; unattended runs need a driver that answers decisions (the autopilot script used here
-  was a scratch file, not in the repo).
+## Open
+- A real model's quality (a 7B coder through the JSON tool protocol is weak): now the only remaining variable once the flow is fixed.
+- The first call to each provider took 15-70 s (cause not found; possibly IPv6 fallback).
+- Both llama-servers write one shared `llama-server.log`.
+- The planner's opening narrative events appear twice after a resume (the node re-runs).
+- The run process exits at the first human decision; unattended runs need a driver that answers decisions (a scratch script was used).
