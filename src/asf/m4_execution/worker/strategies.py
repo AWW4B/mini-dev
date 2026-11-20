@@ -15,6 +15,7 @@
 #   - imports from src/asf/m5_shared/context/compaction.py: compact_history (older turns)
 #   - called by src/asf/m4_execution/worker/worker_graph.py: run_strategy, WorkerStrategyName
 #   - called by tests/m4_execution/worker/test_strategies.py: run_strategy, WorkerStrategyName, WorkerBlocked, WorkerFormatError
+#   - imports from src/asf/m5_shared/trace.py: trace_event (every worker turn and tool result)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -42,6 +43,7 @@ from asf.m5_shared.memory.device_budget import load_memory_config
 from asf.m5_shared.memory.tool_outputs import ShapedOutput, ToolOutputPolicy
 from asf.m5_shared.tools.codeexec.runner import execute_code
 from asf.m5_shared.tools.executor import ToolExecutor
+from asf.m5_shared.trace import trace_event
 from asf.platform.select import get_platform
 
 logger = logging.getLogger(__name__)
@@ -219,6 +221,7 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
             text = transcript()
         step = _repair_tool_step(_ask(gateway, text))
         action = step.get("action")
+        trace_event("worker", "turn", task=str(spec.task_id), turn=turn, prompt_chars=len(text), action=action, tool=step.get("tool"), args=step.get("args"), message=step.get("message"), ran_tests=ran_tests)
         if action == "done":
             if spec.acceptance_test_refs and not ran_tests and turn < spec.step_budget.max_turns:
                 calls.append(f"Turn {turn}: done was refused: call run_tests on the acceptance tests and make them pass first.")
@@ -235,6 +238,8 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
         calls.append(f"Turn {turn}: {step['tool']}({json.dumps(args)[:500]})")
         ran_tests = ran_tests or step["tool"] == "run_tests"
         results.append(_shaped_tool(policy, executor, spec, str(step["tool"]), cast(dict[str, Any], args), worktree))
+        shaped = results[-1]
+        trace_event("worker", "tool_result", task=str(spec.task_id), turn=turn, tool=step["tool"], result=getattr(shaped, "text", shaped))
     raise WorkerBlocked("SPEC_TOO_LARGE: the step budget was exhausted before the model reported done")
 
 

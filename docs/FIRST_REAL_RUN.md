@@ -1,3 +1,22 @@
+<!--
+FILE: docs/FIRST_REAL_RUN.md
+ROLE: Findings from the first real run of the factory on a small project: what broke, what was fixed and what is still open.
+ARCH REF: M1-M5; docs/EXECUTION_PLAN.md
+OWNS: The findings list of the first real run
+DOES NOT OWN: Code, the execution plan
+CONNECTS TO (external boundaries only):
+  - imports from none: none
+  - emits/consumes: none
+INSTRUCTIONS (strict, imperative):
+  1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
+  2. Keep every public name and signature declared below exactly as written; they are the contract other files rely on.
+  3. Use only the standard library, the pinned dependencies in pyproject.toml, and the files listed under CONNECTS TO. Ask before adding a dependency.
+  4. Open text files with encoding="utf-8" explicitly.
+FORBIDDEN: shell=True; os.system; hardcoded absolute paths; container runtimes; importing project modules not listed under CONNECTS TO; printing secrets or API keys
+ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
+DONE WHEN: (1) `uv run python scripts/check_headers.py` reports no problem for this file.
+-->
+
 # First real run: findings (wordfreq mini project)
 
 A small spec (`wordfreq`, a word-frequency CLI) was run through the factory with the real models: T1 Qwen3-1.7B on CPU, T2

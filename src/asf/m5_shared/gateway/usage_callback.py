@@ -6,6 +6,7 @@
 # CONNECTS TO (external boundaries only):
 #   - imports from src/asf/m5_shared/metrics/collector.py: MetricsCollector (D-24)
 #   - imports from src/asf/m5_shared/metrics/pricing.py: price_for (D-27)
+#   - imports from src/asf/m5_shared/trace.py: trace_event (every model call with tokens, latency and the limits used so far)
 #   - called by src/asf/m5_shared/gateway/gateway.py: UsageCallbackHandler
 #   - called by tests/m5_shared/gateway/test_usage_callback.py: UsageCallbackHandler
 #   - emits/consumes: emits MODEL_CALL and USAGE events via MetricsCollector
@@ -18,7 +19,11 @@
 # ERRORS: Raise a subclass of asf.contracts.errors.AsfError with an actionable message; never swallow exceptions silently.
 # DONE WHEN: (1) tests/m5_shared/gateway/test_usage_callback.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m5_shared/gateway/usage_callback.py` and `uv run mypy src/asf/m5_shared/gateway/usage_callback.py` are clean.
 
+import logging
+import sqlite3
 import time
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -26,6 +31,23 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 from asf.m5_shared.metrics.collector import MetricsCollector
 from asf.m5_shared.metrics.pricing import price_for
+from asf.m5_shared.trace import clip, trace_event
+
+logger = logging.getLogger(__name__)
+
+
+def _provider_of(serialized: dict[str, Any] | None) -> str:
+    """Which service a chat model talks to, from its client settings (the callback is not told the route)."""
+    info = serialized or {}
+    kwargs = info.get("kwargs", {}) if isinstance(info.get("kwargs"), dict) else {}
+    base = str(kwargs.get("openai_api_base") or kwargs.get("base_url") or "")
+    ident = info.get("id") or []
+    if "Anthropic" in str(ident):
+        return "anthropic"
+    for needle, name in (("127.0.0.1", "local"), ("localhost", "local"), ("groq", "groq"), ("generativelanguage", "gemini"), ("x.ai", "xai"), ("openrouter", "openrouter"), ("mistral", "mistral"), ("openai.com", "openai")):
+        if needle in base:
+            return name
+    return "dummy" if "Dummy" in str(ident) else ("openai" if not base else base.split("//")[-1].split("/")[0])
 
 
 class UsageCallbackHandler(BaseCallbackHandler):
@@ -46,8 +68,15 @@ class UsageCallbackHandler(BaseCallbackHandler):
         role: str,
         strategy: str,
         collector: MetricsCollector | None = None,
+        budget: Any = None,
+        metrics_db: Path | None = None,
     ) -> None:
         super().__init__()
+        self.budget = budget
+        self.metrics_db = metrics_db
+        self._provider = "unknown"
+        self._prompt_chars = 0
+        self._prompt_preview = ""
         self.run_id = run_id
         self.task_id = task_id
         self.role = role
@@ -57,6 +86,14 @@ class UsageCallbackHandler(BaseCallbackHandler):
         self.total_tokens_out = 0
         self.total_cost = 0.0
         self._start_time = None
+
+    def on_chat_model_start(self, serialized: dict[str, Any] | None = None, messages: Any = None, **kwargs: Any) -> None:
+        """Chat models report here, not through on_llm_start: without this the latency was always 0 and the provider unknown."""
+        self._start_time = time.monotonic()
+        self._provider = _provider_of(serialized)
+        flat = [m for batch in (messages or []) for m in batch]
+        self._prompt_chars = sum(len(str(getattr(m, "content", ""))) for m in flat)
+        self._prompt_preview = str(getattr(flat[-1], "content", ""))[:400] if flat else ""
 
     def on_llm_start(
         self,
@@ -72,8 +109,9 @@ class UsageCallbackHandler(BaseCallbackHandler):
 
         tokens_in = 0
         tokens_out = 0
-        provider = "unknown"
+        provider = self._provider
         model = "unknown"
+        reply = ""
 
         llm_output = getattr(response, "llm_output", None) or {}
         if isinstance(llm_output, dict):
@@ -101,6 +139,9 @@ class UsageCallbackHandler(BaseCallbackHandler):
                     elif "model" in gen_info:
                         model = str(gen_info["model"])
 
+        for gen_list in getattr(response, "generations", None) or []:
+            for gen in gen_list:
+                reply = reply or str(getattr(gen, "text", "") or "")
         cost, is_estimated = price_for(provider, model, tokens_in, tokens_out)
         self.total_tokens_in += tokens_in
         self.total_tokens_out += tokens_out
@@ -121,5 +162,46 @@ class UsageCallbackHandler(BaseCallbackHandler):
             retry_no=0,
         )
 
+        self._account(metric, provider, model, tokens_in, tokens_out, cost, latency_ms, reply)
         if self.collector is not None:
             self.collector.record_call(metric)  # type: ignore[arg-type]
+
+    def _account(self, metric: Any, provider: str, model: str, tokens_in: int, tokens_out: int, cost: float, latency_ms: int, reply: str) -> None:
+        """Count the call against the run's limits, store it in call_metrics and write it to the trace with the limits used so far."""
+        budget = self.budget
+        limits: dict[str, Any] = {}
+        if budget is not None:
+            try:
+                total = tokens_in + tokens_out
+                if provider == "local":
+                    budget.used_local_tokens += total
+                else:
+                    budget.used_remote_tokens += total
+                budget.used_api_spend += cost
+                limits = {
+                    "remote_tokens": f"{budget.used_remote_tokens}/{budget.max_remote_tokens}",
+                    "local_tokens": f"{budget.used_local_tokens}/{budget.max_local_tokens}",
+                    "api_spend": f"{budget.used_api_spend:.4f}/{budget.max_api_spend}",
+                }
+            except (AttributeError, TypeError):
+                limits = {}
+        if self.metrics_db is not None:
+            try:
+                conn = sqlite3.connect(str(self.metrics_db), timeout=30)
+                try:
+                    with conn:
+                        conn.execute(
+                            "INSERT INTO call_metrics (run_id, task_id, provider, model, input_tokens, output_tokens, cost, duration_ms, timestamp, role, strategy, estimated, retry_no) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (self.run_id, self.task_id, provider, model, tokens_in, tokens_out, cost, latency_ms, datetime.now(UTC).isoformat(), self.role, self.strategy,
+                             1 if metric.source == "ESTIMATED" else 0, 0),
+                        )
+                finally:
+                    conn.close()
+            except sqlite3.Error:
+                logger.warning("could not record the model call in call_metrics", exc_info=True)
+        trace_event(
+            "gateway", "model_call", role=self.role, provider=provider, model=model, task=self.task_id, strategy=self.strategy,
+            tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=latency_ms, cost=cost, prompt_chars=self._prompt_chars, prompt_tail=clip(self._prompt_preview, 300),
+            reply=clip(reply, 500), reply_chars=len(reply), limits_used=limits,
+        )

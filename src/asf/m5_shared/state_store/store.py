@@ -48,6 +48,7 @@
 #   - called by src/asf/cli/commands/init.py: StateStore
 #   - called by tests/cli/commands/test_project.py: StateStore
 #   - called by tests/m3_orchestration/test_e2e.py: StateStore
+#   - imports from src/asf/m5_shared/trace.py: trace_event (every state change)
 #   - emits/consumes: writes outbox rows holding EventEnvelope (IF-17) in the same transaction as each mutation
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -76,6 +77,7 @@ from asf.contracts.history import HistoryQuery, HistoryResult, RunSummary
 from asf.contracts.state import StateCommit
 from asf.contracts.tasks import TaskNode, TaskState
 from asf.m5_shared.state_store.schema import migrate
+from asf.m5_shared.trace import trace_event
 
 _ENTITY_TABLE_MAP: dict[str, tuple[str, str]] = {
     "runs": ("runs", "run_id"),
@@ -121,6 +123,15 @@ class StateStore:
         return cls(conn, db_path, readonly=False)
 
     def commit(self, change: StateCommit) -> int:
+        """Apply one IF-16 commit atomically and trace it: the entity, the mutation, the events it caused and the new version."""
+        version = self._commit(change)
+        trace_event(
+            "state", "commit", entity=change.entity, entity_id=str(change.entity_id), expected_version=change.expected_version, new_version=version,
+            mutation=change.mutation, events=[str(getattr(e.kind, "value", e.kind)) for e in change.events],
+        )
+        return version
+
+    def _commit(self, change: StateCommit) -> int:
         """Apply one IF-16 commit atomically; return the new entity version."""
         mapping = _ENTITY_TABLE_MAP.get(change.entity)
         if mapping is None:  # the table name is interpolated into SQL below, so only known entities may reach it

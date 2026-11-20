@@ -10,6 +10,7 @@
 #   - imports from src/asf/m5_shared/memory/device_budget.py: DevicePlan, load_memory_config, plan_device, probe_device (this machine's limits)
 #   - imports from src/asf/m5_shared/memory/router.py: MemoryRouter, RoutedMemory (selection)
 #   - imports from src/asf/m5_shared/memory/store.py: MemoryRecord, MemoryStore, open_memory_store, row_caps (the memory database)
+#   - imports from src/asf/m5_shared/trace.py: trace_event (what memory serves and saves)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -28,6 +29,7 @@ from asf.m5_shared.memory.budgets import budgets_for
 from asf.m5_shared.memory.device_budget import DevicePlan, load_memory_config, plan_device, probe_device
 from asf.m5_shared.memory.router import MemoryRouter, RoutedMemory
 from asf.m5_shared.memory.store import MemoryRecord, MemoryStore, open_memory_store, row_caps
+from asf.m5_shared.trace import trace_event
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,9 @@ class MemoryHooks:
     def context_for(self, spec: Any, run_id: str | None, role: str = "T2") -> RoutedMemory:
         try:
             budgets = budgets_for(role, int(spec.context_budget_tokens), self.config)
-            return self.router.assemble(role, _query(spec), budgets, run_id=run_id)
+            routed = self.router.assemble(role, _query(spec), budgets, run_id=run_id)
+            trace_event("memory", "context_for", task=str(getattr(spec, "task_id", "")), role=role, items=[getattr(i, "title", str(i)) for i in routed.items], reasons=getattr(routed, "reasons", None), budgets=budgets)
+            return routed
         except Exception:  # noqa: BLE001 - a memory failure degrades to "no memory", it never blocks the attempt
             logger.warning("memory retrieval failed for %s; continuing without memory", getattr(spec, "task_id", "?"), exc_info=True)
             return RoutedMemory()
@@ -73,6 +77,7 @@ class MemoryHooks:
     def after_attempt(self, spec: Any, run_id: str | None, attempt_no: int, routed: RoutedMemory, verdict: Any) -> None:
         task_id = str(spec.task_id)
         passed = verdict is None
+        trace_event("memory", "after_attempt", task=task_id, attempt=attempt_no, passed=passed, verdict=verdict)
         failure = None if passed else str(getattr(verdict, "failure_class", "UNKNOWN"))
         failure = getattr(failure, "value", failure)
         files = ", ".join(spec.allowed_files)
@@ -104,6 +109,7 @@ class MemoryHooks:
     def after_run(self, run_id: str, status: str) -> None:
         try:
             self.store.end_session(run_id, status)
-            self.store.promote()
+            promoted = self.store.promote()
+            trace_event("memory", "after_run", run=run_id, status=status, promoted=promoted, rows=self.store.stats() if hasattr(self.store, "stats") else None)
         except Exception:  # noqa: BLE001 - consolidation is best-effort
             logger.warning("could not consolidate memory for run %s", run_id, exc_info=True)

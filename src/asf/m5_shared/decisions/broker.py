@@ -20,6 +20,7 @@
 #   - called by tests/m3_orchestration/test_run_graph.py: DecisionBroker
 #   - called by tests/cli/views/test_inbox_view.py: DecisionBroker
 #   - called by tests/cli/commands/test_inbox.py: DecisionBroker
+#   - imports from src/asf/m5_shared/trace.py: trace_event (decisions asked and answered)
 #   - emits/consumes: emits DECISION_NEEDED and DECISION_RESOLVED events (EventEnvelope) through StateStore.commit
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -38,6 +39,7 @@ from typing import Any
 
 from asf.contracts.decisions import NEVER_AUTO_APPROVED, DecisionRequest, DecisionResolved
 from asf.m5_shared.state_store.store import StateStore
+from asf.m5_shared.trace import trace_event
 
 
 class DecisionBroker:
@@ -49,6 +51,7 @@ class DecisionBroker:
         self.resolved_answers = {}
 
     def request(self, req: DecisionRequest) -> None:
+        trace_event("decision", "requested", decision=req.decision_id, kind=str(getattr(req.kind, "value", req.kind)), task=req.task_id, question=req.question, options=req.options)
         topic = req.kind.value if hasattr(req.kind, "value") else str(req.kind)
         payload_str = req.model_dump_json() if hasattr(req, "model_dump_json") else json.dumps(req.__dict__)
         now_iso = datetime.now(UTC).isoformat()
@@ -60,6 +63,7 @@ class DecisionBroker:
             )
 
     def resolve(self, answer: DecisionResolved) -> None:
+        trace_event("decision", "resolved", decision=answer.decision_id, choice=answer.choice, by=answer.answered_by, default=answer.applied_default)
         """Validate the answer for its kind, log it, and mark it for routing to the requester."""
         cur = self.store.conn.execute(
             "SELECT payload, status FROM decisions WHERE decision_id = ?",

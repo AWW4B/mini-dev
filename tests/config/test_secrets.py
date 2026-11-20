@@ -96,8 +96,9 @@ def test_key_sources_reports_missing(fake_paths: Any, monkeypatch: pytest.Monkey
     assert sources.get("google") in ("keyring", "missing")
 
 
-def test_get_api_keys_reads_numbered_and_comma_separated_keys(fake_paths: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_api_keys_reads_numbered_and_comma_separated_keys(fake_paths: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """Several keys for one provider: a comma separated main value plus numbered ones, in order, no duplicates, ending at a gap."""
+    monkeypatch.chdir(tmp_path)  # the developer's own project .env must not leak into the test
     monkeypatch.setattr("asf.config.secrets._keyring_get", lambda name: None)
     monkeypatch.setenv("FACTORY_GROQ_API_KEY", "k1, k2")
     monkeypatch.setenv("FACTORY_GROQ_API_KEY_2", "k3")
