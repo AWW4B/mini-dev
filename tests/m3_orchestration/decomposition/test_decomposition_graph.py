@@ -169,7 +169,7 @@ def test_an_ambiguous_node_waits_for_an_answer_while_siblings_continue(tmp_path:
                 return SimpleNamespace(invoke=lambda prompt: {"ambiguity": 0.95 if "implement run1-vague" in prompt else 0.1, "coupling": 0.1, "notes": "scripted"})
             return super().model_for(role, purpose, output_schema, task_id)
 
-    out = _run(_plan(_node("run1-vague"), _node("run1-clear")), tmp_path, _Mixed(), scheduler=scheduler, decision_broker=broker)
+    out = _run(_plan(_node("run1-vague", acceptance_refs=[], goal="implement run1-vague etc as needed"), _node("run1-clear")), tmp_path, _Mixed(), scheduler=scheduler, decision_broker=broker)
     assert out["leaves"] == ["run1-clear"] and out["suspended"] == ["run1-vague"]
     assert broker.requests[0].kind.value == "clarify" and out["report"]["complete"] is False
 

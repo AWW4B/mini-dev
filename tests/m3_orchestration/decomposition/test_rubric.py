@@ -22,7 +22,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from asf.contracts.tasks import TaskNode
-from asf.m3_orchestration.decomposition.rubric import RubricScore, score_node
+from asf.m3_orchestration.decomposition.rubric import MODEL_MARGIN, RubricScore, score_node
 
 
 def _node(**over: object) -> TaskNode:
@@ -73,7 +73,8 @@ def test_coupling_grows_with_dependencies_contracts_and_files() -> None:
 def test_t1_is_asked_with_the_rubric_schema_and_its_scores_are_clamped() -> None:
     gateway = _Gateway(RubricScore(ambiguity=1.7, coupling=-0.3, notes="odd"))
     score = score_node(_node(), gateway=gateway)  # type: ignore[arg-type]
-    assert (score.ambiguity, score.coupling, score.notes) == (1.0, 0.0, "odd")
+    assert score.coupling == 0.0 and score.notes == "odd"
+    assert abs(score.ambiguity - (score_node(_node()).ambiguity + MODEL_MARGIN)) < 1e-9  # clamped to 1.0, then held to the heuristic plus the margin
     assert gateway.calls == [("T1", "rubric")]
 
 
@@ -90,3 +91,9 @@ def test_a_reply_outside_the_schema_falls_back_to_the_deterministic_rubric() -> 
 
 def test_a_failing_model_falls_back_too() -> None:
     assert score_node(_node(), gateway=_Gateway(RuntimeError("provider down"))).notes.startswith("deterministic")  # type: ignore[arg-type]
+
+
+def test_a_tiny_model_cannot_rate_a_precise_task_as_blocking_on_its_own() -> None:
+    """The measured failure: a precise one-file task with acceptance criteria scored 1.0 by the 1.7B model must stay below the clarification limit."""
+    score = score_node(_node(), gateway=_Gateway({"ambiguity": 1.0, "coupling": 1.0, "notes": "too ambiguous"}))  # type: ignore[arg-type]
+    assert score.ambiguity <= score_node(_node()).ambiguity + MODEL_MARGIN < 0.85
