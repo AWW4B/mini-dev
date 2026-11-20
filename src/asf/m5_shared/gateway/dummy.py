@@ -199,10 +199,12 @@ def answer_for(purpose: str, prompt: str, schema_name: str | None = None) -> str
         keys = re.search(r"Use exactly these keys for the test files: (.*)", prompt)
         under = [p.strip() for p in (re.search(r"FILES UNDER TEST[^:]*: (.*)", prompt).group(1).split(",") if re.search(r"FILES UNDER TEST[^:]*: (.*)", prompt) else []) if p.strip()]  # type: ignore[union-attr]
         targets = [k.strip() for k in (keys.group(1).split(",") if keys else [])] or ["tests/test_suite_meta.py"]
+        ids = sorted(set(re.findall(r"REQ-\d+", prompt)))
+        trace = ("# covers " + ", ".join(ids) + chr(10)) if ids else ""
         files = []
         for target in targets:
             safe = target if "<" not in target else "tests/test_suite_meta.py"
-            files.append({"path": safe, "content": _SOLUTIONS.get(safe) or _generic_test(safe, under)})
+            files.append({"path": safe, "content": trace + (_SOLUTIONS.get(safe) or _generic_test(safe, under))})
         return json.dumps({"files": files})
     if purpose == "code_step":
         return json.dumps(_worker_step(prompt))
