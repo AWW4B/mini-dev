@@ -274,3 +274,14 @@ def test_the_source_of_modules_already_in_the_worktree_is_shown_to_the_worker(tm
     gateway = _Gateway({"action": "done", "message": "ok"})
     _run("tool_loop", gateway, _Executor(), tmp_path, _spec(max_turns=3))
     assert "EXISTING CODE" in gateway.prompts[0] and "def top_words(text)" in gateway.prompts[0]
+
+
+def test_a_write_whose_content_has_raw_double_quotes_is_still_written(tmp_path: Path) -> None:
+    """The 7B coder put print(f"Error: ...") unescaped inside the JSON string; the re-ask made it answer 'blocked: invalid escape'."""
+    reply = '```json\n{\n  "action": "write_file",\n  "rel_path": "src/billing.py",\n  "content": "import sys\n\ndef f():\n    print(f"Error: {sys.argv}")\n    return 1\n"\n}\n```'
+    gateway = _Gateway(reply, {"action": "done", "message": "ok"})
+    executor = _Executor()
+    _run("tool_loop", gateway, executor, tmp_path, _spec(max_turns=4))
+    name, args = next(call for call in executor.calls if call[0] == "write_file")
+    assert args["rel_path"] == "src/billing.py"
+    assert args["content"] == 'import sys\n\ndef f():\n    print(f"Error: {sys.argv}")\n    return 1\n'

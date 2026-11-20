@@ -42,7 +42,7 @@ from langgraph.config import get_config
 from langgraph.graph import END, START, StateGraph
 
 from asf.contracts.decisions import DecisionRequest
-from asf.contracts.errors import AsfError
+from asf.contracts.errors import AsfError, StateConflict
 from asf.contracts.models import ModelProfile
 from asf.contracts.outcomes import ApprovedPlan, DecompositionReport
 from asf.contracts.tasks import TaskNode, TaskState
@@ -257,6 +257,16 @@ def _node_iterate(state: DecompositionState) -> dict[str, Any]:
     for node, resplit_evidence in work:
         try:
             new_leaves, new_suspended, created = _step(engine, node, resplit_evidence)
+        except StateConflict as err:
+            if resplit_evidence is None:
+                logger.exception("node %s could not be processed", node.id)
+                raise
+            # a task that failed again after its re-split budget was spent (an accepted larger leaf that still fails): the run used to
+            # die here with a traceback; a person decides instead
+            trace_event("decompose", "resplit_refused", task=str(node.id), why=str(err))
+            engine.ask(node, "escalation", f"Task '{node.goal}' failed again and cannot be re-split ({err}). How should it continue?", ["abandon_subtree", "abort_run"])
+            suspended.append(str(node.id))
+            continue
         except AsfError:
             logger.exception("node %s could not be processed", node.id)
             raise

@@ -245,3 +245,27 @@ def test_accepting_a_larger_leaf_certifies_the_parked_node_and_hands_it_to_the_s
     }
     second = graph.invoke({"plan": plan, "seeded": True, "force_leaf": ["run1-big"], "requirement_ids": []}, config)
     assert second["leaves"] == ["run1-big"] and [s.task_id for s in scheduler.specs] == ["run1-big"]
+
+
+def test_a_failed_task_whose_resplit_budget_is_spent_is_put_to_the_user_instead_of_crashing_the_run(tmp_path: Path) -> None:
+    """A larger leaf the user accepted failed again: re-splitting it raised StateConflict and the resumed run process died with a traceback."""
+    big = _node("run1-big", allowed_files=["src/a.py", "src/b.py", "src/c.py", "src/d.py"])
+    bad = {"children": [{"goal": "only one child", "allowed_files": ["src/a.py"]}]}
+    frontier, broker = Frontier("run1"), _Broker()
+    seen: dict[str, Any] = {}
+    original = frontier.update
+
+    def spy(node: Any) -> None:
+        seen[str(node.id)] = node
+        original(node)
+
+    frontier.update = spy  # type: ignore[method-assign]
+    plan = _plan(big)
+    _run(plan, tmp_path, _Gateway({"run1-big": [bad, bad, bad]}), frontier=frontier, decision_broker=broker)
+    spent = seen["run1-big"].model_copy(deep=True)
+    spent.counters.resplits = 1
+    frontier.get = lambda node_id: spent  # type: ignore[method-assign]
+    config: Any = {"configurable": {"frontier": frontier, "profile": PROFILE, "gateway": _Gateway(), "scheduler": _Scheduler(), "decision_broker": broker}}
+    out = build_decomposition_graph(None).invoke({"plan": plan, "seeded": True, "resplit": {"run1-big": "evidence"}, "requirement_ids": []}, config)
+    assert "run1-big" in out["suspended"]
+    assert broker.requests[-1].kind == "escalation"
