@@ -106,7 +106,8 @@ def test_three_malformed_replies_raise_a_format_error(tmp_path: Path) -> None:
 
 
 def test_blocked_is_surfaced_to_the_orchestrator(tmp_path: Path) -> None:
-    gateway = _Gateway({"action": "blocked", "message": "CONTRACT_GAP: ledger has no refund operation"})
+    blocked = {"action": "blocked", "message": "CONTRACT_GAP: ledger has no refund operation"}
+    gateway = _Gateway(blocked, blocked)  # the first block before any write is pushed back once
     with pytest.raises(WorkerBlocked) as info:
         _run("tool_loop", gateway, _Executor(), tmp_path)
     assert "CONTRACT_GAP" in str(info.value)
@@ -225,3 +226,21 @@ def test_run_tests_with_test_function_names_runs_the_tasks_own_test_files(tmp_pa
     executor = _Executor()
     _run("tool_loop", gateway, executor, tmp_path, _spec(max_turns=5, tests=("tests/test_billing.py",)))
     assert [args["selectors"] for name, args in executor.calls if name == "run_tests"] == [["tests/test_billing.py"], ["tests/test_other.py"]]
+
+
+def test_a_first_blocked_before_any_write_is_pushed_back_once(tmp_path: Path) -> None:
+    """The 7B coder answered blocked at turn 1 ('the code for core.py is not provided') for a task about cli.py; one push-back made it write."""
+    gateway = _Gateway(
+        {"action": "blocked", "message": "the code for another module is missing"},
+        {"action": "tool", "tool": "write_file", "args": {"rel_path": "src/billing.py", "content": "x = 1\n"}},
+        {"action": "done", "message": "wrote it"},
+    )
+    assert "wrote it" in _run("tool_loop", gateway, _Executor(), tmp_path)
+    assert "blocked was refused" in gateway.prompts[1]
+
+
+def test_a_second_blocked_is_a_real_block(tmp_path: Path) -> None:
+    gateway = _Gateway({"action": "blocked", "message": "gap one"}, {"action": "blocked", "message": "CONTRACT_GAP: ledger has no refund operation"})
+    with pytest.raises(WorkerBlocked) as info:
+        _run("tool_loop", gateway, _Executor(), tmp_path)
+    assert "CONTRACT_GAP" in str(info.value)
