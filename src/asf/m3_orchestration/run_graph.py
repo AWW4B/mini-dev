@@ -33,6 +33,7 @@
 #   - imports from src/asf/m5_shared/tools/registry.py: ToolRegistry (tool registry)
 #   - imports from src/asf/m5_shared/workspace/workspace.py: Workspace (git worktrees)
 #   - imports from src/asf/m5_shared/events/event_log.py: EventLog (the log the relay feeds)
+#   - imports from src/asf/m5_shared/registry/registry.py: ContractRegistry (the plan's interfaces reach the workers as capsules)
 #   - imports from src/asf/m5_shared/state_store/outbox.py: OutboxRelay (committed events reach the event log)
 #   - imports from src/asf/m3_orchestration/planning/test_authoring.py: author_acceptance_tests (acceptance tests written by the planner tier)
 #   - imports from src/asf/m5_shared/memory/hooks.py: MemoryHooks (project memory around attempts)
@@ -84,6 +85,7 @@ from asf.m3_orchestration.planning.planner_graph import build_planner_graph, pla
 from asf.m3_orchestration.run_control import RunSupervisor
 from asf.m5_shared.decisions.broker import DecisionBroker
 from asf.m5_shared.events.event_log import EventLog
+from asf.m5_shared.registry.registry import ContractRegistry
 from asf.m5_shared.state_store.outbox import OutboxRelay
 from asf.m5_shared.state_store.store import StateStore
 from asf.m5_shared.trace import start_trace, trace_event
@@ -538,6 +540,7 @@ def default_components(project_root: Path, run_id: str, overrides: dict[str, Any
     store = overrides.get("state_store") or StateStore.open(get_paths().state_db(project_root))
     broker = overrides.get("decision_broker") or DecisionBroker(store)
     components.update(state_store=store, decision_broker=broker, blobs=overrides.get("blobs") or BlobStore(), leaf_ids=set())
+    components.setdefault("registry", ContractRegistry(store, broker))  # never created before: planned interfaces were not stored, so no worker saw a signature
     profile = overrides.get("profile") or ModelProfile.model_validate(
         {"model_id": "local", "backend": "llama-server", "c_eff_tokens": 8192, "max_slots": 1, "tokens_per_s": 20.0}
     )

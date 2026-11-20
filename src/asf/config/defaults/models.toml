@@ -43,6 +43,13 @@ T2 = { provider = "local", model = "qwen2.5-coder-7b", base_url = "http://127.0.
 T3 = { provider = "groq", model = "openai/gpt-oss-120b", reasoning_effort = "medium", fallbacks = [{ provider = "groq", model = "openai/gpt-oss-20b", reasoning_effort = "medium" }, "gemini"] }
 reviewer = { provider = "groq", model = "openai/gpt-oss-20b", reasoning_effort = "low", fallbacks = [{ provider = "groq", model = "openai/gpt-oss-120b", reasoning_effort = "low" }, "gemini"] }
 
+# dummy: every role is answered by the deterministic stand-in model (no network, no key, no cost): for running the whole flow.
+[profiles.dummy.roles]
+T1 = { provider = "dummy", model = "dummy" }
+T2 = { provider = "dummy", model = "dummy" }
+T3 = { provider = "dummy", model = "dummy" }
+reviewer = { provider = "dummy", model = "dummy" }
+
 [profiles.local-only.roles]
 T1 = { provider = "local", model = "qwen3-1.7b", base_url = "http://127.0.0.1:8081/v1", params = { temperature = 0.1, extra_body = { chat_template_kwargs = { enable_thinking = false } } } }
 T2 = { provider = "local", model = "qwen2.5-coder-7b", base_url = "http://127.0.0.1:8082/v1", params = { temperature = 0.1 } }
