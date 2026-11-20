@@ -19,6 +19,7 @@
 #   - imports from src/asf/contracts/tasks.py: TaskNode, TaskState (nodes)
 #   - called by src/asf/m3_orchestration/run_graph.py: build_decomposition_graph
 #   - called by tests/m3_orchestration/decomposition/test_decomposition_graph.py: build_decomposition_graph
+#   - imports from src/asf/m5_shared/trace.py: trace_event (sizing, rubric scores and split decisions)
 #   - emits/consumes: emits node sizing/split events and emits narrative events TASK_RECEIVED, STEP_STARTED, HANDOFF_SENT, HANDOFF_RECEIVED (with causation_id set to the triggering event) via StateStore.commit
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -53,6 +54,7 @@ from asf.m3_orchestration.decomposition.split_validator import validate_split
 from asf.m3_orchestration.decomposition.splitter import propose_split
 from asf.m3_orchestration.lifecycle import MAX_SPLIT_ATTEMPTS, transition
 from asf.m4_execution.scheduler import TaskScheduler
+from asf.m5_shared.trace import trace_event
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +154,7 @@ def _step(engine: _Engine, node: TaskNode, resplit_evidence: str | None) -> tupl
         size = estimate_size(node, engine.context_tokens(node))
         node = node.model_copy(update={"size_estimate": size})
         score = score_node(node, gateway=engine.rubric_gateway)
+        trace_event("decompose", "sized", task=str(node.id), goal=node.goal, size=size, ambiguity=score.ambiguity, coupling=score.coupling, notes=score.notes, files=list(node.allowed_files), contracts=list(node.contract_refs), deps=[str(d) for d in node.deps], c_eff=engine.profile.c_eff_tokens)
         if score.ambiguity > AMBIGUITY_LIMIT:
             node = transition(node, TaskState.AWAITING_INPUT, "ambiguous or contradictory")
             engine.ask(node, "clarify", f"Task '{node.goal}' is too ambiguous to size ({score.notes}). What exactly is meant?", ["clarified", "abandon_subtree"])
@@ -161,11 +164,13 @@ def _step(engine: _Engine, node: TaskNode, resplit_evidence: str | None) -> tupl
             spec = certify_leaf(
                 node, engine.base_commit, engine.parent_branch, registry=engine.registry, authoring=engine.authoring
             )
+            trace_event("decompose", "leaf", task=str(node.id), tests=list(spec.acceptance_test_refs), capsules=len(spec.capsules))
             node = transition(node, TaskState.LEAF_CERTIFIED, "fits the leaf profile").model_copy(update={"kind": "leaf"})
             frontier.update(node)
             if engine.scheduler is not None:
                 engine.scheduler.enqueue(spec)
             return [str(node.id)], suspended, created
+        trace_event("decompose", "too_big_to_be_a_leaf", task=str(node.id), size=size, limit=0.6 * engine.profile.c_eff_tokens, files=len(node.allowed_files), risk=max(score.ambiguity, score.coupling))
         node = transition(node, TaskState.SPLITTING, "too big")
         feedback = ""
     else:
@@ -184,6 +189,7 @@ def _step(engine: _Engine, node: TaskNode, resplit_evidence: str | None) -> tupl
             sized = [c.model_copy(update={"size_estimate": estimate_size(c, engine.context_tokens(c))}) for c in proposal.children]
             proposal = proposal.model_copy(update={"children": sized})
             problems = validate_split(node, proposal)
+            trace_event("decompose", "split_proposed", task=str(node.id), children=[{"id": str(c.id), "goal": c.goal, "files": list(c.allowed_files), "size": c.size_estimate} for c in sized], problems=problems)
         if not problems:
             node = transition(node, TaskState.DECOMPOSED, "split committed")
             frontier.update(node)

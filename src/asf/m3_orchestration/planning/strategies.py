@@ -8,6 +8,7 @@
 #   - imports from src/asf/contracts/errors.py: InvalidModelOutput (validation re-asks exhausted)
 #   - called by src/asf/m3_orchestration/planning/planner_graph.py: run_planner_strategy
 #   - called by tests/m3_orchestration/planning/test_strategies.py: run_planner_strategy, PlannerStrategyName
+#   - imports from src/asf/m5_shared/trace.py: trace_event (the plan and each critique)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -26,6 +27,7 @@ from pydantic import ValidationError
 
 from asf.contracts.errors import InvalidModelOutput
 from asf.m5_shared.gateway.gateway import ModelGateway
+from asf.m5_shared.trace import trace_event
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +96,7 @@ def run_planner_strategy(
     if name not in ("single_pass", "self_critique", "plan_then_verify"):
         raise ValueError(f"unknown planner strategy '{name}'")
     plan = _ask(gateway, role, prompt, output_schema)
+    trace_event("planner", "first_plan", strategy=name, prompt_chars=len(prompt), plan=_dump(plan))
     if name == "single_pass":
         return plan
     if name == "self_critique":
@@ -102,6 +105,7 @@ def run_planner_strategy(
             if not issues:
                 break
             logger.info("planner self-critique round %d found issues", round_no + 1)
+            trace_event("planner", "critique", round=round_no + 1, issues=issues, plan=_dump(plan))
             plan = _revise(gateway, role, prompt, plan, issues, output_schema)
         return plan
     if name == "plan_then_verify":

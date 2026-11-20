@@ -9,6 +9,7 @@
 #   - imports from src/asf/m5_shared/gateway/providers.py: RouteConfig, build_chat_model (construction)
 #   - imports from src/asf/m5_shared/gateway/usage_callback.py: UsageCallbackHandler (accounting)
 #   - imports from src/asf/contracts/errors.py: BudgetExceeded, ProviderUnavailable (error types)
+#   - imports from src/asf/m5_shared/trace.py: trace_event (the route chosen for every model request)
 #   - imports from src/asf/config/secrets.py: get_api_keys (one route per stored key, so a rate limited key falls through to the next)
 #   - imports from src/asf/config/loader.py: load_layered (the layered models.toml)
 #   - called by src/asf/m5_shared/context/compaction.py: ModelGateway
@@ -49,6 +50,7 @@ from asf.contracts.budget import RunBudget
 from asf.contracts.errors import BudgetExceeded, ProviderUnavailable
 from asf.contracts.models import ModelRole
 from asf.m5_shared.gateway.providers import RouteConfig, build_chat_model
+from asf.m5_shared.trace import trace_event
 
 if TYPE_CHECKING:
     from langchain_core.runnables import Runnable
@@ -62,6 +64,7 @@ class ModelGateway:
     roles: dict[str, dict[str, Any]]
     strategies: dict[str, str]
     providers: dict[str, dict[str, Any]]
+    metrics_db: Any = None  # <project>/.factory/state.db: where model calls are recorded (call_metrics); set by the run
 
     def __init__(self, profile_name: str, budget: RunBudget) -> None:
         self.profile_name = profile_name
@@ -171,7 +174,10 @@ class ModelGateway:
             task_id=task_id,
             role=role_key,
             strategy=strategy,
+            budget=self.budget,
+            metrics_db=self.metrics_db,
         )
+        trace_event("gateway", "route", role=role_key, purpose=purpose, task=task_id, routes=[f"{r.provider}:{r.model}#{r.key_index + 1}" for r in routes], structured=getattr(output_schema, "__name__", None))
 
         runnables: list[Runnable[Any, Any]] = []
         first_error: Exception | None = None

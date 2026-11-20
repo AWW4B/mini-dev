@@ -39,6 +39,7 @@
 #   - called by src/asf/cli/commands/run.py: start_run, resume_run
 #   - called by tests/m3_orchestration/test_run_graph.py: build_run_graph, start_run, resume_run
 #   - called by tests/m3_orchestration/test_e2e.py: start_run
+#   - imports from src/asf/m5_shared/trace.py: start_trace, trace_event (the run's flight recorder starts here)
 #   - emits/consumes: emits RUN_STARTED, RUN_COMPLETED, emits narrative events TASK_RECEIVED, STEP_STARTED, HANDOFF_SENT, HANDOFF_RECEIVED, GATE_RESULT, DECISION_NEEDED (with causation_id set to the triggering event) via StateStore.commit
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -85,6 +86,7 @@ from asf.m5_shared.decisions.broker import DecisionBroker
 from asf.m5_shared.events.event_log import EventLog
 from asf.m5_shared.state_store.outbox import OutboxRelay
 from asf.m5_shared.state_store.store import StateStore
+from asf.m5_shared.trace import start_trace, trace_event
 from asf.m5_shared.workspace.blobs import BlobStore
 
 logger = logging.getLogger(__name__)
@@ -152,6 +154,7 @@ def _say(run_id: str, role: str, kind: str, payload: dict[str, Any], task_id: st
                 {"entity": "run", "entity_id": run_id, "expected_version": int(row["version"]), "mutation": {"status": row["status"]}, "events": [event]}
             )
         )
+        trace_event("narrative", kind, role=role, task=task_id, payload=payload, caused_by=caused_by)
         _relay()  # so the viewer sees the line now, not when the monitor next ticks
         return str(event["event_id"])
     except Exception:  # noqa: BLE001 - the story is an aid; the run goes on without a line of it
@@ -373,6 +376,7 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
             interrupt({"paused": True, "run_id": state["run_id"]})  # the run waits here until `factory run resume`
             _set_status(store, state["run_id"], "RUNNING", "state_changed")
             continue
+        trace_event("run", "tick", tick=ticks, control=command, states=dict(seen))
         if command == "abort":
             _set_status(store, state["run_id"], "CANCELLED", "cancelled")
             return {"status": "CANCELLED", "note": "aborted by the user"}
@@ -574,7 +578,11 @@ def _build_execution(components: dict[str, Any], project_root: Path, run_id: str
     store: StateStore = components["state_store"]
     workspace = overrides.get("workspace") or Workspace(project_root)
     runtime = overrides.get("runtime") or LocalRuntime(max_slots=1)
-    gateway = components.get("gateway") or ModelGateway(str(overrides.get("profile_name") or ModelGateway.default_profile_name()), components.get("budget") or _default_budget(run_id))
+    run_budget = components.get("budget") or _default_budget(run_id)
+    components["budget"] = run_budget
+    gateway = components.get("gateway") or ModelGateway(str(overrides.get("profile_name") or ModelGateway.default_profile_name()), run_budget)
+    gateway.budget = run_budget  # one budget per run: the CLI built its gateway with a placeholder, and nothing was ever counted against the limits
+    gateway.metrics_db = project_root / ".factory" / "state.db"
     for role, name in dict(overrides.get("model_overrides") or {}).items():  # --model ROLE=NAME
         gateway.roles.setdefault(role, {})["model"] = name
     if overrides.get("strategy_overrides"):  # --strategy ROLE=NAME
@@ -707,6 +715,8 @@ def start_run(request: StructuredRequest, project_root: Path, overrides: dict[st
     ``checkpointer``. A run that stops at a human decision returns its run_id; answer in the inbox and resume it.
     """
     run_id = str(overrides.get("run_id") or new_id("run"))
+    start_trace(project_root, run_id)
+    trace_event("run", "start", run=run_id, request=request.request_id, project=str(project_root), overrides=sorted(overrides))
     components = default_components(project_root, run_id, overrides)
     graph = build_run_graph(overrides.get("checkpointer") or _checkpointer(project_root))
     config: Any = {"configurable": {"thread_id": run_id, **components}}
@@ -744,6 +754,8 @@ def resume_run(run_id: str, project_root: Path, overrides: dict[str, Any] | None
     yet, nothing happens (the run keeps waiting).
     """
     overrides = dict(overrides or {})
+    start_trace(project_root, run_id)
+    trace_event("run", "resume", run=run_id, project=str(project_root))
     components = default_components(project_root, run_id, overrides)
     store: StateStore = components["state_store"]
     if _restore_specs(project_root, store, components.get("scheduler")):

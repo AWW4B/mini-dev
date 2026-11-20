@@ -17,6 +17,7 @@
 #   - called by src/asf/m4_execution/integration/integrator.py: TaskScheduler
 #   - called by tests/m4_execution/test_scheduler.py: MAX_INFRA_RETRIES, TaskScheduler
 #   - called by src/asf/m3_orchestration/run_graph.py: TaskScheduler
+#   - imports from src/asf/m5_shared/trace.py: trace_event (task states and every attempt)
 #   - emits/consumes: emits STATE_CHANGED and HANDOFF_SENT (scheduler -> worker, causation = the READY event)
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -42,6 +43,7 @@ from asf.contracts.outcomes import Requeue, TaskOutcome
 from asf.contracts.tasks import LeafTaskSpec
 from asf.m5_shared.runtime.local_runtime import LocalRuntime
 from asf.m5_shared.state_store.store import StateStore
+from asf.m5_shared.trace import trace_event
 
 logger = logging.getLogger(__name__)
 
@@ -248,8 +250,10 @@ class TaskScheduler:
         result: Requeue | TaskOutcome | None = None
         infra_failure: str | None = None
         assert self._runner is not None
+        trace_event("scheduler", "attempt_start", task=task_id, attempt=attempt_no, role=spec.model_role, files=list(getattr(spec, "allowed_files", [])), tests=list(getattr(spec, "acceptance_test_refs", [])))
         try:
             result = self._runner(spec, lease, attempt_no)
+            trace_event("scheduler", "attempt_end", task=task_id, attempt=attempt_no, result=type(result).__name__ if result is not None else "verified", detail=result)
         except Exception as err:  # noqa: BLE001 - the attempt runner raises worker, context and infrastructure errors alike
             name = type(err).__name__
             if name == "ContextOverflow":
@@ -310,6 +314,7 @@ class TaskScheduler:
         previous = self._state.get(task_id)
         self._state[task_id] = state
         if previous != state:
+            trace_event("scheduler", "task_state", task=task_id, previous=previous, now=state)
             self._emit("STATE_CHANGED", {"task_id": task_id, "from": previous, "to": state})
 
     def _emit(self, kind: str, payload: dict[str, Any]) -> None:

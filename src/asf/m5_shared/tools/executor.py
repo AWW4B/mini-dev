@@ -18,6 +18,7 @@
 #   - called by tests/m5_shared/tools/test_executor.py: ToolExecutor
 #   - called by src/asf/m4_execution/worker/worker_graph.py: ToolExecutor
 #   - called by src/asf/m3_orchestration/run_graph.py: ToolExecutor
+#   - imports from src/asf/m5_shared/trace.py: trace_event (every tool call with its arguments, verdict and output)
 #   - emits/consumes: emits TOOL_CALLED (tool, args_summary, reason, approved|denied|pending_approval, sandbox_tier, via_code_exec) and TOOL_RESULT (summary, exit_status, duration, output_ref) for EVERY call, including calls from code_exec scripts
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -50,6 +51,7 @@ from asf.m5_shared.events.redaction import redact_text
 from asf.m5_shared.metrics.collector import MetricsCollector
 from asf.m5_shared.tools.policy import PolicyEngine, Verdict
 from asf.m5_shared.tools.registry import ToolRegistry
+from asf.m5_shared.trace import trace_event
 from asf.platform.select import get_platform
 
 logger = logging.getLogger(__name__)
@@ -117,6 +119,15 @@ class ToolExecutor:
         return get_platform().sandbox().tier
 
     def invoke(self, invocation: ToolInvocation, allowed_files: list[str]) -> ToolResult:
+        """Run one tool call and trace it: which tool, on which task, with which arguments, the verdict, the duration and a preview of the output."""
+        result = self._invoke(invocation, allowed_files)
+        trace_event(
+            "tool", "invoke", tool=invocation.tool, task=getattr(invocation, "task_id", None), role=str(getattr(invocation, "role", "")), args=invocation.args,
+            allowed=allowed_files, status=str(result.status), exit_code=result.exit_code, duration_ms=result.duration_ms, sandbox=str(result.sandbox_tier), output=result.output,
+        )
+        return result
+
+    def _invoke(self, invocation: ToolInvocation, allowed_files: list[str]) -> ToolResult:
         t0 = time.monotonic()
         active_tier = self.active_tier()
 
