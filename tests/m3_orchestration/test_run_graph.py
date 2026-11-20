@@ -307,3 +307,12 @@ def test_the_run_tells_its_story_as_paired_hand_offs_between_the_agents(tmp_path
         assert received["actor"]["role"] == hand_off["payload"]["to_role"]
     assert any(e["kind"] == "task_received" and e["actor"]["role"] == "planner" for e in events)
     assert any(e["kind"] == "gate_result" and e["payload"]["passed"] for e in events)
+
+
+def test_the_run_row_remembers_the_profile_it_started_with(tmp_path: Path) -> None:
+    """`factory run resume` used today's default profile and tried real providers for a run started with the dummy one."""
+    store = StateStore.open(tmp_path / "state.db")
+    over = _overrides(tmp_path, store, _Gateway({"modules": [_module("ledger", ["REQ-1"])]}), _Acceptance((True, [])), profile_name="dummy")
+    start_run(_request(), tmp_path, over)
+    payload = json.loads(store.conn.execute("SELECT payload FROM runs WHERE run_id = ?", (RUN,)).fetchone()["payload"])
+    assert payload["profile"] == "dummy"
