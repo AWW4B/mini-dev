@@ -85,7 +85,7 @@ def test_external_dependencies_are_not_cycles() -> None:
 
 def test_files_must_be_disjoint_non_empty_and_inside_the_parent() -> None:
     shared = _good()
-    shared[1] = shared[1].model_copy(update={"allowed_files": ["src/a.py"]})
+    shared[1] = shared[1].model_copy(update={"allowed_files": ["src/a.py"], "deps": []})  # both could run at the same time
     assert any("owned by both" in p for p in validate_split(PARENT, _proposal(shared)))
     none = _good()
     none[0] = none[0].model_copy(update={"allowed_files": []})
@@ -120,3 +120,12 @@ def test_sizes_that_are_not_known_are_not_checked() -> None:
     parent = PARENT.model_copy(update={"size_estimate": None})
     children = [c.model_copy(update={"size_estimate": 99999}) for c in _good()]
     assert validate_split(parent, _proposal(children)) == []
+
+
+def test_children_that_build_one_file_step_by_step_are_valid_when_they_run_in_sequence() -> None:
+    """A single-function module could not be split at all; one file may now be built function by function, each child depending on the last."""
+    steps = [
+        _node("p.1", acceptance_refs=["a1"], allowed_files=["src/a.py"], size_estimate=500),
+        _node("p.2", acceptance_refs=["a2"], allowed_files=["src/a.py"], deps=["p.1"], size_estimate=600),
+    ]
+    assert validate_split(PARENT, _proposal(steps)) == []

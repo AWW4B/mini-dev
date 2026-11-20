@@ -135,8 +135,9 @@ def propose_split(
         except KeyError:
             logger.warning("skill %s is not available; proposing the split without it", _SKILL)
     prompt = (
-        "Split this task into 2 to 5 smaller children. Each child needs a goal, the files it owns (no file may belong to two "
-        "children), its slice of the contract, acceptance criteria, and the positions of the siblings it depends on. Together "
+        "Split this task into 2 to 5 smaller children. Each child needs a goal, the files it owns (a file may belong to two "
+        "children only when the later one lists the earlier one in deps: a file built up function by function, each child adding one "
+        "function and its own test), its slice of the contract, acceptance criteria, and the positions of the siblings it depends on. Together "
         "the children must cover every acceptance criterion of the parent and must each be smaller than the parent. "
         'Answer with JSON {"children": [{"goal": "...", "allowed_files": [], "contract_refs": [], "acceptance_refs": [], "deps": []}], '
         '"new_contract_ids": [], "rationale": "..."}.\n\n'

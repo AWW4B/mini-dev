@@ -240,3 +240,10 @@ def test_a_task_of_non_code_files_gets_a_deterministic_test_and_no_model_call(tm
     text = (tmp_path / paths[0]).read_text(encoding="utf-8")
     assert text.startswith("# REQ-004") and "'pyproject.toml'" in text
     compile(text, paths[0], "exec")
+
+
+def test_the_children_of_one_split_get_their_own_test_file_names(tmp_path: Path) -> None:
+    node = TaskNode.model_validate({"id": "r1-core.2", "run_id": "r1", "kind": "leaf", "goal": "g", "idempotency_key": "k3", "allowed_files": ["src/p/core.py"]})
+    gateway = _Gateway()
+    author_acceptance_tests(node, False, gateway=gateway, project_root=tmp_path)  # type: ignore[arg-type]
+    assert "tests/test_core_part2.py" in gateway.prompts[0]

@@ -96,7 +96,9 @@ def _target_names(node: TaskNode) -> list[str]:
     """
     modules = [PurePosixPath(f.replace(chr(92), "/")) for f in node.allowed_files]
     # a file that is already a test (tests/test_core.py) is what a worker writes, not a module under test: no tests/test_test_core.py
-    names = [f"tests/test_{m.stem}.py" for m in modules if m.suffix == ".py" and m.parts[0] != "tests" and not m.stem.startswith("test_")]
+    part = str(node.id).rpartition(".")[2] if "." in str(node.id) else ""  # a split child: children of one file must not overwrite each other's tests
+    suffix = f"_part{part}" if part.isdigit() else ""
+    names = [f"tests/test_{m.stem}{suffix}.py" for m in modules if m.suffix == ".py" and m.parts[0] != "tests" and not m.stem.startswith("test_")]
     return list(dict.fromkeys(names)) or ["tests/test_<name>.py"]
 
 
