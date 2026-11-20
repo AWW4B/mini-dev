@@ -347,3 +347,16 @@ def test_a_run_whose_remaining_tasks_wait_on_abandoned_ones_is_seen_as_stuck() -
     assert _stuck_behind_abandoned(store, "r") is True
     conn.execute("INSERT INTO decisions VALUES ('r', 'PENDING')")
     assert _stuck_behind_abandoned(store, "r") is False
+
+
+def test_work_in_flight_in_the_scheduler_is_not_stuck() -> None:
+    import sqlite3
+
+    from asf.m3_orchestration.run_graph import _stuck_behind_abandoned
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE tasks (task_id TEXT, run_id TEXT, state TEXT)")
+    conn.execute("CREATE TABLE decisions (run_id TEXT, status TEXT)")
+    conn.execute("INSERT INTO tasks VALUES ('a', 'r', 'ABANDONED')")
+    store: Any = SimpleNamespace(conn=conn)
+    assert _stuck_behind_abandoned(store, "r", busy=True) is False

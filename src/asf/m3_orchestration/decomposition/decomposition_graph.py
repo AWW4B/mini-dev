@@ -161,7 +161,7 @@ def _step(engine: _Engine, node: TaskNode, resplit_evidence: str | None) -> tupl
             engine.ask(node, "clarify", f"Task '{node.goal}' is too ambiguous to size ({score.notes}). What exactly is meant?", ["clarified", "abandon_subtree"])
             frontier.update(node)
             return leaves, [str(node.id)], created
-        if fits_leaf(node, size, engine.profile, risk=max(score.ambiguity, score.coupling)):
+        if fits_leaf(node, size, engine.profile, risk=max(score.ambiguity, score.coupling)) or _is_trivial(node, size, engine.profile):
             spec = certify_leaf(
                 node, engine.base_commit, engine.parent_branch, registry=engine.registry, authoring=engine.authoring
             )
@@ -203,6 +203,15 @@ def _step(engine: _Engine, node: TaskNode, resplit_evidence: str | None) -> tupl
             frontier.update(node)
             return leaves, [str(node.id)], created
         node = transition(node, TaskState.SPLITTING, "feed the validator errors back")
+
+
+TRIVIAL_FRACTION = 0.15  # a task this small is a leaf whatever the rubric fears: splitting it cannot make it simpler
+
+
+def _is_trivial(node: TaskNode, size: int, profile: ModelProfile) -> bool:
+    """A real run split 590-token tasks over and over (46 planner calls, every proposal rejected as 'not smaller enough'); the rubric's risk
+    score cannot be lowered by cutting something that small, so it is certified as a leaf (the file and interface limits still apply)."""
+    return size <= TRIVIAL_FRACTION * profile.c_eff_tokens and fits_leaf(node, size, profile)
 
 
 def _force_leaf(engine: _Engine, node: TaskNode, why: str) -> str:

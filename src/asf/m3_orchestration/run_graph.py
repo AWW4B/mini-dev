@@ -384,8 +384,13 @@ def _answered_nodes(store: StateStore, run_id: str) -> tuple[list[str], list[str
 _ACTIVE_STATES = ("PROPOSED", "SIZING", "SPLITTING", "READY", "RUNNING", "VERIFYING", "REPAIRING", "ESCALATED", "AWAITING_INPUT", "FAILED_ATTEMPT")
 
 
-def _stuck_behind_abandoned(store: StateStore, run_id: str) -> bool:
-    """True when something was abandoned, nothing is running or waiting for an answer, and the tasks left cannot start: the run would idle for ever."""
+def _stuck_behind_abandoned(store: StateStore, run_id: str, busy: bool = False) -> bool:
+    """True when something was abandoned, nothing is running or waiting for an answer, and the tasks left cannot start: the run would idle for ever.
+
+    ``busy`` says the scheduler holds work in flight: its RUNNING and READY states are not written to the task rows, so the rows alone cannot tell.
+    """
+    if busy:
+        return False
     states = {str(r[0]) for r in store.conn.execute("SELECT DISTINCT state FROM tasks WHERE run_id = ?", (run_id,))}
     if "ABANDONED" not in states or states & set(_ACTIVE_STATES):
         return False
@@ -455,7 +460,10 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
             _set_status(store, state["run_id"], "FAILED", "run_completed", {"reason": f"the root task is {current}"})
             return {"status": "FAILED", "note": f"the root task is {current}"}
 
-        if _stuck_behind_abandoned(store, state["run_id"]):
+        scheduler = _dep("scheduler")
+        state_of = getattr(scheduler, "state_of", None)
+        busy = state_of is not None and any(state_of(t) in ("RUNNING", "READY") for t in _dep("leaf_ids", set()))
+        if _stuck_behind_abandoned(store, state["run_id"], busy):
             reason = "the remaining work depends on abandoned tasks; the run ends here with what was verified, and the delivery report lists what is missing"
             trace_event("run", "stuck_behind_abandoned", run=state["run_id"])
             _set_status(store, state["run_id"], "FAILED", "run_completed", {"reason": reason})

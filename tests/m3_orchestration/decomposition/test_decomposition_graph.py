@@ -269,3 +269,11 @@ def test_a_failed_task_whose_resplit_budget_is_spent_is_put_to_the_user_instead_
     out = build_decomposition_graph(None).invoke({"plan": plan, "seeded": True, "resplit": {"run1-big": "evidence"}, "requirement_ids": []}, config)
     assert "run1-big" in out["suspended"]
     assert broker.requests[-1].kind == "escalation"
+
+
+def test_a_tiny_task_is_a_leaf_even_when_the_rubric_scores_it_risky(tmp_path: Path) -> None:
+    """A real run split 590-token tasks again and again; every proposal was rejected and the planner calls were the whole cost of the run."""
+    scheduler = _Scheduler()
+    gateway = _Gateway({}, ambiguity=0.8)
+    out = _run(_plan(_node("run1-tiny")), tmp_path, gateway, scheduler=scheduler)
+    assert out["leaves"] == ["run1-tiny"] and gateway.split_calls == []
