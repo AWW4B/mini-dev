@@ -242,7 +242,7 @@ def _node_plan(state: RunState) -> dict[str, Any]:
     if approved is None:
         _set_status(_dep("state_store"), state["run_id"], "CANCELLED", "run_completed", {"reason": "the plan was rejected"})
         return {"plan": None, "status": "CANCELLED", "note": "the plan was rejected"}
-    modules = [str(m.get("name", "?")) for m in (approved.model_dump(mode="json").get("modules") or [])]
+    modules = [str(n.id).rsplit("-", 1)[-1] for n in [*approved.shared_type_nodes, *approved.module_nodes]]
     _hand_off(rid, "planner", "decomposer", f"design plan approved: {', '.join(modules) or 'no modules'}")
     return {"plan": approved.model_dump(mode="json"), "status": "RUNNING"}
 

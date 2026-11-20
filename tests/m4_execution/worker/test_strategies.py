@@ -175,3 +175,19 @@ def test_code_exec_falls_back_to_the_tool_loop_without_a_tier_a_sandbox(tmp_path
 def test_an_unknown_strategy_is_a_programming_error(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         _run("magic", _Gateway(), _Executor(), tmp_path)  # type: ignore[arg-type]
+
+
+def test_a_tool_name_in_the_action_field_is_read_as_that_tool_call(tmp_path: Path) -> None:
+    """Measured with the local 7B coder: {"action": "write_file", "rel_path": ..., "content": ...} cost every attempt its whole turn budget."""
+    gateway = _Gateway(
+        {"action": "write_file", "rel_path": "src/billing.py", "content": "def charge(): ...\n"},
+        {"action": "write_file", "args": {"rel_path": "src/b2.py", "content": "x = 1\n"}},
+        {"action": "done", "message": "wrote both"},
+    )
+    executor = _Executor()
+    assert "wrote both" in _run("tool_loop", gateway, executor, tmp_path)
+    assert executor.calls[:2] == [
+        ("write_file", {"rel_path": "src/billing.py", "content": "def charge(): ...\n"}),
+        ("write_file", {"rel_path": "src/b2.py", "content": "x = 1\n"}),
+    ]
+    assert "invalid action" not in gateway.prompts[1]
