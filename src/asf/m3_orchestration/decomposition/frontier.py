@@ -98,6 +98,13 @@ class Frontier:
         row = self._store.conn.execute("SELECT payload FROM tasks WHERE task_id = ?", (node_id,)).fetchone()
         return TaskNode.model_validate_json(row["payload"]) if row is not None else None
 
+    def _stored(self, node_id: str) -> bool:
+        """A node whose row exists in any state (a leaf, a split parent, an escalated node) must not be pushed again: pushing wrote it back as
+        PROPOSED, so a resumed run re-seeded its plan and reset every task it had already decomposed."""
+        if self._store is None:
+            return False
+        return self._store.conn.execute("SELECT 1 FROM tasks WHERE task_id = ?", (node_id,)).fetchone() is not None
+
     def _known(self, node_id: str) -> bool:
         return node_id in self._order
 
@@ -108,7 +115,7 @@ class Frontier:
         for node in nodes:
             if node.state is not TaskState.PROPOSED:
                 raise ValueError(f"Only PROPOSED nodes can enter the frontier; {node.id} is {node.state.value}")
-            if self._known(str(node.id)):
+            if self._known(str(node.id)) or self._stored(str(node.id)):
                 logger.debug("node %s is already known to the frontier", node.id)
                 continue
             self._order[str(node.id)] = len(self._order)
