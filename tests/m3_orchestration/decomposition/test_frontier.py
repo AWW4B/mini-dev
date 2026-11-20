@@ -125,3 +125,16 @@ def test_other_runs_are_not_loaded(tmp_path: Path) -> None:
     Frontier("r1", store).push([_node("mine")])
     Frontier("r2", store).push([_node("theirs", run_id="r2")])
     assert _ids(Frontier("r2", store).pop_batch(10)) == ["theirs"]
+
+
+def test_pushing_a_node_that_is_already_stored_does_not_reset_it(tmp_path: Any) -> None:
+    """A resumed run re-seeded its plan: every task it had decomposed was written back as PROPOSED and sized again."""
+    store = StateStore.open(tmp_path / "state.db")
+    first = Frontier("r1", store)
+    first.push([_node("leaf")])
+    node = first.pop_batch(1)[0]
+    first.update(node.model_copy(update={"state": "LEAF_CERTIFIED", "kind": "leaf"}))
+    second = Frontier("r1", store)  # a new process
+    second.push([_node("leaf")])
+    assert str(store.conn.execute("SELECT state FROM tasks WHERE task_id = 'leaf'").fetchone()["state"]) == "LEAF_CERTIFIED"
+    assert len(second) == 0
