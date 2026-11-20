@@ -16,7 +16,7 @@
 #   - called by src/asf/m4_execution/worker/worker_graph.py: run_strategy, WorkerStrategyName
 #   - called by tests/m4_execution/worker/test_strategies.py: run_strategy, WorkerStrategyName, WorkerBlocked, WorkerFormatError
 #   - imports from src/asf/m5_shared/trace.py: trace_event (every worker turn and tool result)
-#   - imports from src/asf/m5_shared/stack.py: find_stack, stack_prompt (the binding tech stack in every prompt)
+#   - imports from src/asf/m5_shared/stack.py: find_stack, stack_prompt, project_brief (the binding tech stack and the user's spec in every prompt)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -43,7 +43,7 @@ from asf.m5_shared.context.compaction import compact_history
 from asf.m5_shared.gateway.gateway import ModelGateway
 from asf.m5_shared.memory.device_budget import load_memory_config
 from asf.m5_shared.memory.tool_outputs import ShapedOutput, ToolOutputPolicy
-from asf.m5_shared.stack import find_stack, stack_prompt
+from asf.m5_shared.stack import find_stack, project_brief, stack_prompt
 from asf.m5_shared.tools.codeexec.runner import execute_code
 from asf.m5_shared.tools.executor import ToolExecutor
 from asf.m5_shared.trace import trace_event
@@ -321,12 +321,14 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
                 continue
             return f"tool_loop finished in {turn} step(s): {step.get('message', '')}"
         if action == "blocked":
-            if (not wrote or tests_failed) and refused_blocks < MAX_BLOCK_REFUSALS and turn < spec.step_budget.max_turns:
+            if (not wrote or tests_failed or (spec.acceptance_test_refs and not ran_tests)) and refused_blocks < MAX_BLOCK_REFUSALS and turn < spec.step_budget.max_turns:
                 # a small model reports "blocked" at turn 1 without trying, or after the first failing test run instead of fixing the code
                 refused_blocks += 1
                 why = (
                     "the acceptance tests failed. Failure output:\n" + last_failure[-1500:] + "\nReply now with a write_file action holding the corrected COMPLETE file from your ALLOWED FILES, then run the tests again"
                     if tests_failed
+                    else "you have not run the acceptance tests yet: call run_tests and read what they say before deciding"
+                    if wrote
                     else f"you have not written anything yet: write the ALLOWED FILES ({', '.join(spec.allowed_files)}), then run the tests"
                 )
                 calls.append(f"Turn {turn}: blocked was refused: {why}. Report blocked only after real attempts.")
@@ -348,6 +350,13 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
             tests_failed = False  # the code changed: the earlier failure no longer says what the code does
         results.append(_shaped_tool(policy, executor, spec, str(step["tool"]), cast(dict[str, Any], args), worktree))
         shaped = results[-1]
+        if step["tool"] == "write_file" and spec.acceptance_test_refs and str(getattr(shaped, "text", shaped)).startswith("[ok]"):
+            # feedback on every edit (SWE-agent's lint-on-edit idea): run 6's 20B helper rewrote the file 12 times and never ran a test
+            tests = _shaped_tool(policy, executor, spec, "run_tests", {"selectors": list(spec.acceptance_test_refs)}, worktree)
+            results[-1] = tests.model_copy(update={"text": f"{getattr(shaped, 'text', shaped)}\nThe acceptance tests ran by themselves after this write: {tests.text}"})
+            shaped, ran_tests = results[-1], True
+            last_failure = str(tests.text)
+            tests_failed = not last_failure.startswith("[ok] (0,")
         if step["tool"] == "run_tests":
             last_failure = str(getattr(shaped, "text", shaped))
             tests_failed = not last_failure.startswith("[ok] (0,")
@@ -444,7 +453,7 @@ def run_strategy(
         chosen = "tool_loop"
     if chosen not in _STRATEGIES:
         raise ValueError(f"unknown worker strategy '{name}'")
-    stack = stack_prompt(find_stack(Path(worktree)))
+    stack = "\n".join(part for part in (stack_prompt(find_stack(Path(worktree))), project_brief(Path(worktree))) if part)
     context = f"{stack}\n\n{context}" if stack else context
     token = _MODEL_ROLE.set(model_role or "T2")
     try:

@@ -195,17 +195,17 @@ def test_a_tool_name_in_the_action_field_is_read_as_that_tool_call(tmp_path: Pat
 
 
 def test_done_is_refused_until_the_acceptance_tests_have_been_run(tmp_path: Path) -> None:
-    """Measured: the 7B coder wrote count_word_frequency() where the tests import top_words(), said done after one write and never ran a test."""
+    """Measured: the 7B coder wrote count_word_frequency() where the tests import top_words(), said done after one write and never ran a test.
+    Now the tests run by themselves after every write, so done is refused only while nothing was written and tested."""
     gateway = _Gateway(
-        {"action": "write_file", "rel_path": "src/billing.py", "content": "x = 1\n"},
         {"action": "done", "message": "too early"},
-        {"action": "tool", "tool": "run_tests", "args": {"selectors": ["tests/test_billing.py"]}},
+        {"action": "write_file", "rel_path": "src/billing.py", "content": "x = 1\n"},
         {"action": "done", "message": "tests pass"},
     )
     executor = _Executor()
     assert "tests pass" in _run("tool_loop", gateway, executor, tmp_path, _spec(max_turns=6, tests=("tests/test_billing.py",)))
     assert [name for name, _ in executor.calls] == ["write_file", "run_tests"]
-    assert "done was refused" in gateway.prompts[2]
+    assert "done was refused" in gateway.prompts[1] and "ran by themselves after this write" in gateway.prompts[2]
 
 
 def test_the_acceptance_test_source_is_in_front_of_the_worker(tmp_path: Path) -> None:
@@ -330,3 +330,22 @@ def test_a_file_in_a_fenced_block_after_the_json_is_written_verbatim(tmp_path: P
     _run("tool_loop", gateway, executor, tmp_path, _spec(max_turns=4))
     args = next(call[1] for call in executor.calls if call[0] == "write_file")
     assert args == {"rel_path": "src/billing.py", "content": body}
+
+
+def test_a_block_after_writing_but_before_any_test_run_is_refused(tmp_path: Path) -> None:
+    """Run 6: the 7B wrote core.py without `import re`, then answered blocked claiming `re` is not in the standard library."""
+
+    class _NoTests(_Executor):
+        def invoke(self, invocation: Any, allowed_files: list[str]) -> Any:
+            if invocation.tool == "run_tests":
+                return SimpleNamespace(status="ok", output="(1, 'NameError: re')")
+            return super().invoke(invocation, allowed_files)
+
+    gateway = _Gateway(
+        {"action": "blocked", "message": "re is not available"},
+        {"action": "write_file", "rel_path": "src/billing.py", "content": "import re\n"},
+        {"action": "done", "message": "fixed"},
+    )
+    spec = _spec(max_turns=6)
+    assert "fixed" in _run("tool_loop", gateway, _NoTests(), tmp_path, spec)
+    assert "blocked was refused" in gateway.prompts[1]

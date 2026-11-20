@@ -75,6 +75,18 @@ def _usage(project_root: Path) -> list[str]:
     return [f"| {role} | {purpose} | {n} | {tokens[(role, purpose)]} |" for (role, purpose), n in calls.most_common()]
 
 
+def _cited(evidence: str, known: set[str]) -> bool:
+    """Evidence counts when it names a known task (in full or by its last part, 'core' for run_x-core) or quotes most of a known cause."""
+    e = evidence.strip().lower()
+    for k in (x.lower() for x in known):
+        if e and (e in k or k in e or e == k.rsplit("-", 1)[-1]):
+            return True
+        words = set(e.split())
+        if len(words) >= 4 and len(words & set(k.split())) >= 0.6 * len(words):
+            return True
+    return False
+
+
 def _checked(raw: str, known: set[str]) -> tuple[list[dict[str, Any]], int]:
     """The agent's proposals that cite only evidence the facts contain, and how many were dropped (nothing is hidden: the count is reported)."""
     try:
@@ -85,7 +97,7 @@ def _checked(raw: str, known: set[str]) -> tuple[list[dict[str, Any]], int]:
     dropped = 0
     for item in items if isinstance(items, list) else []:
         evidence = [str(e) for e in item.get("evidence", [])] if isinstance(item, dict) else []
-        if isinstance(item, dict) and item.get("change") and evidence and all(any(e in k for k in known) for e in evidence):
+        if isinstance(item, dict) and item.get("change") and evidence and all(_cited(e, known) for e in evidence):
             kept.append(item)
         else:
             dropped += 1

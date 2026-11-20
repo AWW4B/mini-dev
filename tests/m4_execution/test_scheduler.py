@@ -214,7 +214,7 @@ def test_context_overflow_and_blocked_workers_become_outcomes() -> None:
         sched.enqueue(_spec(name, max_attempts=1))  # a block on the last attempt is a real block
     sched.dispatch_ready()
     sched.wait_idle()
-    sched.enqueue(_spec("s"))
+    sched.enqueue(_spec("s", max_attempts=1))
     sched.dispatch_ready()
     sched.wait_idle()
     by_task = {str(o.task_id): o.failure_class.value for o in outcomes}
