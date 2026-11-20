@@ -280,3 +280,20 @@ def test_a_running_task_that_is_cancelled_gives_its_slot_back() -> None:
 def test_dispatching_without_a_runtime_or_runner_is_an_error() -> None:
     with pytest.raises(RuntimeError):
         TaskScheduler().dispatch_ready()
+
+
+def test_a_queued_spec_survives_into_a_new_process_as_json() -> None:
+    """`factory run resume` is a new process: the leaves a run stopped on must be handed over, or the run waits for them forever."""
+    import json
+
+    spec = {
+        "task_id": "t1", "goal": "g", "acceptance_test_refs": ["tests/test_a.py"], "capsules": [], "allowed_files": ["src/a.py"],
+        "read_only_files": [], "context_budget_tokens": 4096, "model_role": "T2", "base_commit": "abc", "parent_branch": "main",
+    }
+    first, *_ = _scheduler(lambda *a: None)
+    first.enqueue_json(json.dumps(spec))
+    saved = first.spec_json("t1")
+    assert saved is not None and first.spec_json("nope") is None
+    second, *_ = _scheduler(lambda *a: None)
+    second.enqueue_json(saved)
+    assert second.state_of("t1") in ("READY", "BLOCKED")

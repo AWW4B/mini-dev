@@ -141,6 +141,16 @@ class TaskScheduler:
             self._deps[task_id] = self._lookup_deps(task_id)
             self._set_state(task_id, "BLOCKED" if not self._deps_done(task_id) else "READY")
 
+    def spec_json(self, task_id: str) -> str | None:
+        """The queued spec as JSON, so a run that stops at a human decision can hand its leaves to the process that resumes it."""
+        with self._lock:
+            spec = self._specs.get(task_id)
+        return spec.model_dump_json() if spec is not None else None
+
+    def enqueue_json(self, text: str) -> None:
+        """Enqueue a spec saved with ``spec_json`` (idempotent, like ``enqueue``)."""
+        self.enqueue(LeafTaskSpec.model_validate_json(text))
+
     def mark_verified(self, task_id: str) -> None:
         """IF-17 TaskVerified / Integrated for a dependency: re-check the tasks that were waiting for it."""
         with self._lock:

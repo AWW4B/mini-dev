@@ -165,6 +165,37 @@ def _hand_off(run_id: str, sender: str, receiver: str, summary: str, task_id: st
     _say(run_id, receiver, "handoff_received", {"summary": summary}, task_id, caused_by=sent)
 
 
+def _spec_file(project_root: Path, task_id: str) -> Path:
+    return project_root / ".factory" / "specs" / f"{task_id}.json"
+
+
+def _save_specs(project_root: Path, leaf_ids: set[str]) -> None:
+    """Write each queued leaf spec to disk: the scheduler's queue lives in memory, and `factory run resume` is a new process."""
+    scheduler = _dep("scheduler")
+    if getattr(scheduler, "spec_json", None) is None:  # a scheduler without persistence (a test double) has nothing to save
+        return
+    for task_id in leaf_ids:
+        text = scheduler.spec_json(task_id)
+        if text is not None:
+            target = _spec_file(project_root, task_id)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+
+
+def _restore_specs(project_root: Path, store: StateStore, scheduler: Any) -> int:
+    """Re-queue the leaves a previous process certified but did not finish (a resumed run used to wait for them forever)."""
+    if getattr(scheduler, "enqueue_json", None) is None:
+        return 0
+    restored = 0
+    for row in store.conn.execute("SELECT task_id FROM tasks WHERE state IN ('LEAF_CERTIFIED', 'READY', 'BLOCKED')").fetchall():
+        task_id = str(row["task_id"])
+        saved = _spec_file(project_root, task_id)
+        if scheduler.state_of(task_id) is None and saved.is_file():
+            scheduler.enqueue_json(saved.read_text(encoding="utf-8"))
+            restored += 1
+    return restored
+
+
 def _relay() -> None:
     """Move committed outbox rows into the event log so the trace, dashboard and web viewer can read them."""
     relay: OutboxRelay | None = _dep("relay")
@@ -268,6 +299,7 @@ def _node_decompose(state: RunState) -> dict[str, Any]:
     out = graph.invoke({"plan": plan, "requirement_ids": [r.req_id for r in request.requirements]}, get_config())
     report = DecompositionReport.model_validate(out["report"])
     _dep("leaf_ids", set()).update(out.get("leaves", []))
+    _save_specs(Path(state["project_root"]), set(out.get("leaves", [])))
     rid = state["run_id"]
     titles = {str(r["task_id"]): str(r["title"]) for r in store.conn.execute("SELECT task_id, title FROM tasks WHERE run_id = ?", (rid,))}
     leaves = [str(x) for x in out.get("leaves", [])]
@@ -352,6 +384,7 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
             graph = build_decomposition_graph(None)
             out = graph.invoke({"plan": plan, "resplit": requests.get("resplit", {}), "requirement_ids": []}, get_config())
             _dep("leaf_ids", set()).update(out.get("leaves", []))
+            _save_specs(Path(state["project_root"]), set(out.get("leaves", [])))
 
         current = _root_state(store, root_id)
         if current == "INTEGRATED":
@@ -713,6 +746,8 @@ def resume_run(run_id: str, project_root: Path, overrides: dict[str, Any] | None
     overrides = dict(overrides or {})
     components = default_components(project_root, run_id, overrides)
     store: StateStore = components["state_store"]
+    if _restore_specs(project_root, store, components.get("scheduler")):
+        logger.info("re-queued the leaves a previous process had certified")
     reconcile = overrides.get("reconcile")
     if reconcile is not None:
         reconcile(store)  # recovery.reconcile_on_startup, wired by the caller that owns the workspace and runtime
