@@ -367,18 +367,30 @@ def _answered_nodes(store: StateStore, run_id: str) -> tuple[list[str], list[str
     """Nodes parked on a decomposer question (cannot be split, too ambiguous) whose answer has arrived: (certify as leaf, abandon)."""
     accept: list[str] = []
     abandon: list[str] = []
-    rows = store.conn.execute("SELECT task_id, payload FROM decisions WHERE run_id = ? AND status = 'RESOLVED' AND topic IN ('manual_split', 'clarify')", (run_id,)).fetchall()
+    rows = store.conn.execute("SELECT task_id, payload FROM decisions WHERE run_id = ? AND status = 'RESOLVED' AND topic IN ('manual_split', 'clarify', 'escalation')", (run_id,)).fetchall()
     for row in rows:
         task_id = str(row["task_id"] or "")
         state_row = store.conn.execute("SELECT state FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
         if not task_id or state_row is None or str(state_row["state"]) not in ("ESCALATED", "AWAITING_INPUT"):
             continue  # already applied, or not parked
         choice = str(json.loads(row["payload"]).get("resolution", {}).get("choice", ""))
-        if choice in ("accept_larger_leaf", "clarified"):
+        if choice in ("accept_larger_leaf", "clarified", "replan"):  # replan: the task is tried again (the help ladder gives it the bigger models)
             accept.append(task_id)
         elif choice == "abandon_subtree":
             abandon.append(task_id)
     return accept, abandon
+
+
+_ACTIVE_STATES = ("PROPOSED", "SIZING", "SPLITTING", "READY", "RUNNING", "VERIFYING", "REPAIRING", "ESCALATED", "AWAITING_INPUT", "FAILED_ATTEMPT")
+
+
+def _stuck_behind_abandoned(store: StateStore, run_id: str) -> bool:
+    """True when something was abandoned, nothing is running or waiting for an answer, and the tasks left cannot start: the run would idle for ever."""
+    states = {str(r[0]) for r in store.conn.execute("SELECT DISTINCT state FROM tasks WHERE run_id = ?", (run_id,))}
+    if "ABANDONED" not in states or states & set(_ACTIVE_STATES):
+        return False
+    pending = store.conn.execute("SELECT COUNT(*) FROM decisions WHERE run_id = ? AND status = 'PENDING'", (run_id,)).fetchone()
+    return not (pending and int(pending[0]))
 
 
 def _root_state(store: StateStore, root_id: str) -> str | None:
@@ -442,6 +454,12 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
         if current in _FAILED_ROOT_STATES:
             _set_status(store, state["run_id"], "FAILED", "run_completed", {"reason": f"the root task is {current}"})
             return {"status": "FAILED", "note": f"the root task is {current}"}
+
+        if _stuck_behind_abandoned(store, state["run_id"]):
+            reason = "the remaining work depends on abandoned tasks; the run ends here with what was verified, and the delivery report lists what is missing"
+            trace_event("run", "stuck_behind_abandoned", run=state["run_id"])
+            _set_status(store, state["run_id"], "FAILED", "run_completed", {"reason": reason})
+            return {"status": "FAILED", "note": reason}
 
         ticks += 1
         if max_ticks is not None and ticks >= int(max_ticks):
