@@ -208,5 +208,5 @@ class UsageCallbackHandler(BaseCallbackHandler):
         trace_event(
             "gateway", "model_call", role=self.role, provider=provider, model=model, task=self.task_id or current_task(), purpose=self.strategy,
             tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=latency_ms, cost=cost, prompt_chars=self._prompt_chars, prompt_tail=clip(self._prompt_preview, 300),
-            reply=clip(reply, 500), reply_chars=len(reply), limits_used=limits,
+            reply=clip(reply, 4000), reply_chars=len(reply), limits_used=limits,
         )

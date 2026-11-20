@@ -88,11 +88,33 @@ class WorkerFormatError(Exception):
     """The model kept answering outside the required JSON shape."""
 
 
+_WRITE_PATH = re.compile(r'"(?:rel_path|path)"\s*:\s*"([^"\n]+)"')
+_WRITE_BODY = re.compile(r'"content"\s*:\s*"(.*)"\s*\}?\s*\}?\s*(?:```)?\s*$', re.DOTALL)
+_UNESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "'": "'", "/": "/"}
+
+
+def _salvage_write(text: str) -> dict[str, Any] | None:
+    """A write_file reply whose content is not valid JSON, read anyway. The 7B coder puts raw double quotes (an f-string, a print)
+    inside the JSON string: json.loads fails, the re-ask made it answer 'blocked: invalid escape' and the task escalated.
+    The path and the content are unambiguous, so the content is unescaped by hand."""
+    path, body = _WRITE_PATH.search(text), _WRITE_BODY.search(text)
+    if path is None or body is None or '"write_file"' not in text:
+        return None
+    raw = re.sub(r"\\(.)", lambda m: _UNESCAPES.get(m.group(1), "\\" + m.group(1)), body.group(1))
+    return {"action": "tool", "tool": "write_file", "args": {"rel_path": path.group(1), "content": raw}}
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end < start:
         raise ValueError("no JSON object found in the reply")
-    parsed = json.loads(text[start : end + 1])
+    try:
+        parsed = json.loads(text[start : end + 1], strict=False)
+    except json.JSONDecodeError as err:
+        salvaged = _salvage_write(text[start : end + 1])
+        if salvaged is None:
+            raise ValueError(f"the reply is not valid JSON ({err.msg} at char {err.pos}): escape every double quote inside a string as \\\" and write line breaks as \\n") from err
+        return salvaged
     if not isinstance(parsed, dict) or "action" not in parsed:
         raise ValueError("the reply must be a JSON object with an 'action' field")
     return cast(dict[str, Any], parsed)
