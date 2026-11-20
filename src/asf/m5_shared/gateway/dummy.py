@@ -180,7 +180,7 @@ def _worker_step(prompt: str) -> dict[str, Any]:
         if path not in written:
             return {"action": "tool", "tool": "write_file", "args": {"rel_path": path, "content": _SOLUTIONS.get(path) or _stub_for(path, goal)}}
     refs = [r.strip() for r in (re.search(r"ACCEPTANCE TESTS: (.*)", prompt).group(1).split(",") if re.search(r"ACCEPTANCE TESTS: (.*)", prompt) else []) if r.strip()]  # type: ignore[union-attr]
-    if refs and "run_tests(" not in prompt:
+    if refs and not re.search(r"Turn \d+: run_tests\(", prompt):
         return {"action": "tool", "tool": "run_tests", "args": {"selectors": refs}}
     return {"action": "done", "message": f"dummy worker wrote {', '.join(sorted(written)) or 'nothing'} and ran {', '.join(refs) or 'no tests'}"}
 

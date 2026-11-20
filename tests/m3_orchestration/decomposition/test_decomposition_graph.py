@@ -216,3 +216,29 @@ def test_missing_collaborators_are_reported_clearly() -> None:
         graph.invoke({"plan": _plan()}, {"configurable": {}})
     with pytest.raises(RuntimeError, match="profile"):
         graph.invoke({"plan": _plan()}, {"configurable": {"frontier": Frontier("run1")}})
+
+
+def test_accepting_a_larger_leaf_certifies_the_parked_node_and_hands_it_to_the_scheduler(tmp_path: Path) -> None:
+    """Answering manual_split with accept_larger_leaf used to be recorded and then ignored, so the run waited for it forever."""
+    big = _node("run1-big", allowed_files=["src/a.py", "src/b.py", "src/c.py", "src/d.py"])
+    bad = {"children": [{"goal": "only one child", "allowed_files": ["src/a.py"]}]}
+    frontier, scheduler = Frontier("run1"), _Scheduler()
+    seen: dict[str, Any] = {}
+    original = frontier.update
+
+    def spy(node: Any) -> None:
+        seen[str(node.id)] = node
+        original(node)
+
+    frontier.update = spy  # type: ignore[method-assign]
+    frontier.get = lambda node_id: seen.get(node_id)  # type: ignore[method-assign]
+    plan = _plan(big)
+    first = _run(plan, tmp_path, _Gateway({"run1-big": [bad, bad, bad]}), frontier=frontier, scheduler=scheduler, decision_broker=_Broker())
+    assert first["suspended"] == ["run1-big"] and scheduler.specs == []
+
+    graph = build_decomposition_graph(None)
+    config: Any = {
+        "configurable": {"frontier": frontier, "profile": PROFILE, "gateway": _Gateway(), "scheduler": scheduler, "authoring": lambda node: ["tests/test_big.py"]}
+    }
+    second = graph.invoke({"plan": plan, "seeded": True, "force_leaf": ["run1-big"], "requirement_ids": []}, config)
+    assert second["leaves"] == ["run1-big"] and [s.task_id for s in scheduler.specs] == ["run1-big"]

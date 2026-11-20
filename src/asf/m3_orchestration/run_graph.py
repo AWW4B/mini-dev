@@ -361,6 +361,24 @@ def _narrate_progress(store: StateStore, run_id: str, seen: dict[str, str]) -> N
         _say(run_id, role, kind, payload, task_id)
 
 
+def _answered_nodes(store: StateStore, run_id: str) -> tuple[list[str], list[str]]:
+    """Nodes parked on a decomposer question (cannot be split, too ambiguous) whose answer has arrived: (certify as leaf, abandon)."""
+    accept: list[str] = []
+    abandon: list[str] = []
+    rows = store.conn.execute("SELECT task_id, payload FROM decisions WHERE run_id = ? AND status = 'RESOLVED' AND topic IN ('manual_split', 'clarify')", (run_id,)).fetchall()
+    for row in rows:
+        task_id = str(row["task_id"] or "")
+        state_row = store.conn.execute("SELECT state FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        if not task_id or state_row is None or str(state_row["state"]) not in ("ESCALATED", "AWAITING_INPUT"):
+            continue  # already applied, or not parked
+        choice = str(json.loads(row["payload"]).get("resolution", {}).get("choice", ""))
+        if choice in ("accept_larger_leaf", "clarified"):
+            accept.append(task_id)
+        elif choice == "abandon_subtree":
+            abandon.append(task_id)
+    return accept, abandon
+
+
 def _root_state(store: StateStore, root_id: str) -> str | None:
     row = store.conn.execute("SELECT state FROM tasks WHERE task_id = ?", (root_id,)).fetchone()
     return str(row["state"]) if row is not None else None
@@ -391,6 +409,16 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
             _set_status(store, state["run_id"], "CANCELLED", "cancelled")
             return {"status": "CANCELLED", "note": "aborted by the user"}
 
+        accept, abandon = _answered_nodes(store, state["run_id"])
+        for task_id in abandon:
+            row = store.conn.execute("SELECT version FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+            if row is not None:
+                store.commit(StateCommit.model_validate({"entity": "task", "entity_id": task_id, "expected_version": int(row["version"]), "mutation": {"state": "ABANDONED"}}))
+                trace_event("run", "subtree_abandoned", task=task_id)
+        if accept:
+            trace_event("run", "answers_applied", accept=accept)
+            out = build_decomposition_graph(None).invoke({"plan": plan, "force_leaf": accept, "requirement_ids": []}, get_config())
+            _dep("leaf_ids", set()).update(out.get("leaves", []))
         _restore_specs(Path(state["project_root"]), store, _dep("scheduler"))  # a leaf certified by a process that stopped is queued again
         requests = driver() if driver is not None else None
         _relay()
