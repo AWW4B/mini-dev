@@ -95,6 +95,22 @@ def _extract_json(text: str) -> dict[str, Any]:
     return cast(dict[str, Any], parsed)
 
 
+_TOOL_NAMES = ("read_file", "write_file", "search_code", "run_tests", "run_linter")
+
+
+def _repair_tool_step(step: dict[str, Any]) -> dict[str, Any]:
+    """A 7B coder often answers {"action": "write_file", "rel_path": ..., "content": ...}: the tool name in the action field.
+
+    That reply is unambiguous, so it is read as {"action": "tool", "tool": "write_file", "args": {...}} instead of costing a turn
+    (every attempt in the first real run ended on the step budget this way).
+    """
+    action = step.get("action")
+    if action in _TOOL_NAMES and not isinstance(step.get("tool"), str):
+        args = step.get("args") if isinstance(step.get("args"), dict) else {k: v for k, v in step.items() if k not in ("action", "message", "tool")}
+        return {"action": "tool", "tool": action, "args": args}
+    return step
+
+
 def _model_text(gateway: ModelGateway, prompt: str) -> str:
     reply = gateway.model_for(cast(Any, _ROLE), purpose="code_step").invoke(prompt)
     return str(getattr(reply, "content", reply))
@@ -184,7 +200,7 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
             summary = compact_history(gateway, [summary, *old] if summary else old, max(64, spec.context_budget_tokens // 20))
             del calls[:cut], results[:cut]
             text = transcript()
-        step = _ask(gateway, text)
+        step = _repair_tool_step(_ask(gateway, text))
         action = step.get("action")
         if action == "done":
             return f"tool_loop finished in {turn} step(s): {step.get('message', '')}"
