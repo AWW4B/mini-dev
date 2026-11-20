@@ -157,3 +157,17 @@ def test_a_run_update_that_does_not_mention_status_or_cost_keeps_them(tmp_path: 
     store.commit(make("r1", 2, {"status": "PAUSED"}))  # type: ignore[arg-type]
     row = store.conn.execute("SELECT status, cost FROM runs WHERE run_id = 'r1'").fetchone()
     assert (row["status"], row["cost"]) == ("PAUSED", 1.5)
+
+
+def test_a_write_succeeds_after_another_connection_committed_since_this_one_read(tmp_path: Path) -> None:
+    """`factory inbox answer` committed while the run process worked: the run's next write failed with 'database is locked' and the run died."""
+    import sqlite3
+
+    store = StateStore.open(tmp_path / "state.db")
+    store.conn.execute("SELECT count(*) FROM runs").fetchone()  # an earlier read on the run's connection
+    other = sqlite3.connect(str(tmp_path / "state.db"), timeout=30)
+    with other:
+        other.execute("INSERT INTO decisions (decision_id, run_id, task_id, topic, status, version, payload, created_at) VALUES ('d', 'r', NULL, 'x', 'PENDING', 1, '{}', 't')")
+    other.close()
+    store.commit(SimpleNamespace(entity="runs", entity_id="r1", expected_version=None, mutation={"project_id": "p", "status": "RUNNING"}, events=[]))  # type: ignore[arg-type]
+    assert store.conn.execute("SELECT status FROM runs WHERE run_id = 'r1'").fetchone()["status"] == "RUNNING"
