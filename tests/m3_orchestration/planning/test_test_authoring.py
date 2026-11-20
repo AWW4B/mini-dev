@@ -130,3 +130,38 @@ def test_the_skill_body_is_added_when_available_and_a_missing_skill_is_tolerated
     other = _Gateway()
     _author(tmp_path / "second", other, skills=SimpleNamespace(load_body=missing))
     assert "PROCEDURE" not in other.prompts[0]
+
+
+class _Sequence(_Gateway):
+    """Answers each ask with the next file set; the last one repeats."""
+
+    def __init__(self, *answers: dict[str, str]) -> None:
+        super().__init__(answers[0])
+        self.answers = list(answers)
+
+    def model_for(self, role: Any, purpose: str, output_schema: Any = None, task_id: Any = None) -> Any:
+        model = super().model_for(role, purpose, output_schema, task_id)
+        outer = self
+
+        class _Next:
+            def invoke(self, prompt: str) -> Any:
+                outer.prompts.append(prompt)
+                return {"files": outer.answers.pop(0) if len(outer.answers) > 1 else outer.answers[0]}
+
+        _ = model
+        return _Next()
+
+
+def test_a_source_file_among_the_tests_is_dropped_and_the_tests_are_kept(tmp_path: Path) -> None:
+    """Measured: the planner listed src/wordfreq/core.py beside its tests and the whole run aborted."""
+    gateway = _Sequence({"src/wordfreq/core.py": "x = 1\n", "tests/test_core.py": "def test_a(): ...\n"})
+    assert _author(tmp_path, gateway) == ["tests/test_core.py"]
+    assert not (tmp_path / "src").exists()
+    assert len(gateway.prompts) == 3  # asked, then re-asked twice with the refused paths named
+    assert "src/wordfreq/core.py" in gateway.prompts[1]
+
+
+def test_a_re_ask_that_fixes_the_paths_is_used(tmp_path: Path) -> None:
+    gateway = _Sequence({"src/wordfreq/core.py": "x = 1\n"}, {"tests/test_core.py": "def test_a(): ...\n"})
+    assert _author(tmp_path, gateway) == ["tests/test_core.py"]
+    assert len(gateway.prompts) == 2

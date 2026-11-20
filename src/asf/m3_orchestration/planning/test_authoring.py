@@ -54,6 +54,17 @@ class _TestFiles(BaseModel):
     files: dict[str, str]
 
 
+MAX_REASKS = 2
+
+
+def _is_safe_test_path(raw: str) -> bool:
+    try:
+        _safe_test_path(raw)
+    except InvalidModelOutput:
+        return False
+    return True
+
+
 def _safe_test_path(raw: str) -> str:
     path = PurePosixPath(raw.replace("\\", "/"))
     if path.is_absolute() or ".." in path.parts or not path.parts or path.parts[0] != "tests" or not path.name.startswith("test_") or path.suffix != ".py":
@@ -97,13 +108,14 @@ def author_acceptance_tests(
         skill=_skill_text(skills),
     )
 
-    def draft(role: str, purpose: str) -> _TestFiles:
+    def draft(role: str, purpose: str, ask: str = prompt) -> _TestFiles:
         model = gateway.model_for(cast(Any, role), purpose=purpose, output_schema=_TestFiles)
-        raw = model.invoke(prompt)
+        raw = model.invoke(ask)
         return raw if isinstance(raw, _TestFiles) else _TestFiles.model_validate(raw if isinstance(raw, dict) else {"files": {}})
 
+    role, purpose = "T3", "acceptance_tests"
     try:
-        result = draft("T3", "acceptance_tests")
+        result = draft(role, purpose)
     except (ProviderUnavailable, BudgetExceeded):
         if not allow_local_with_approval:
             raise
@@ -124,12 +136,24 @@ def author_acceptance_tests(
                     )
                 )
             raise ApprovalRequired(f"Local drafts of the acceptance tests for task {node.id} need your approval (APPROVE_LOCAL_TESTS).") from None
-        result = draft("T2", "acceptance_tests_local_draft")
+        role, purpose = "T2", "acceptance_tests_local_draft"
+        result = draft(role, purpose)
 
-    if not result.files:
-        raise InvalidModelOutput("The model returned no test files")
+    # A model sometimes lists a source file (src/pkg/core.py) beside its tests; one bad path used to abort the whole run. Re-ask with
+    # the paths that were refused (at most twice), then keep the usable files and drop the rest.
+    for _ in range(MAX_REASKS):
+        refused = [path for path in result.files if not _is_safe_test_path(path)]
+        if result.files and not refused:
+            break
+        feedback = f"{prompt}\n\nYour previous answer used unusable paths {refused or '(no files at all)'}. Every key must be tests/<name>/test_<name>.py; do not include source files."
+        result = draft(role, purpose, feedback)
+    usable = {path: content for path, content in result.files.items() if _is_safe_test_path(path)}
+    if len(usable) != len(result.files):
+        logger.warning("dropped unusable test paths from the model's answer: %s", [path for path in result.files if path not in usable])
+    if not usable:
+        raise InvalidModelOutput("The model returned no usable test files (they must be under tests/ and named test_*.py)")
     written: list[str] = []
-    for raw_path, content in result.files.items():
+    for raw_path, content in usable.items():
         rel = _safe_test_path(raw_path)
         target = project_root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
