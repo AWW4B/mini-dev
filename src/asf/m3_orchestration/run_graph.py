@@ -398,6 +398,7 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
     max_ticks = _dep("max_ticks")
     ticks = 0
     seen: dict[str, str] = {}
+    applied: set[str] = set()
 
     while True:
         command = control() if control is not None else None
@@ -412,6 +413,11 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
             return {"status": "CANCELLED", "note": "aborted by the user"}
 
         accept, abandon = _answered_nodes(store, state["run_id"])
+        # an answer is applied once per process: the task escalates again after the accepted attempt, its old answer is still RESOLVED, and
+        # applying it on every tick re-opened the task about eighty times (a run that never ended and spent tokens for nothing)
+        accept = [t for t in accept if t not in applied]
+        abandon = [t for t in abandon if t not in applied]
+        applied.update(accept, abandon)
         for task_id in abandon:
             row = store.conn.execute("SELECT version FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
             if row is not None:
