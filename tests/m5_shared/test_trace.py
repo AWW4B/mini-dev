@@ -22,6 +22,7 @@ import logging
 import threading
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -35,7 +36,7 @@ def _closed() -> Iterator[None]:
     stop_trace()
 
 
-def _lines(path: Path) -> list[dict]:
+def _lines(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
