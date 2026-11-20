@@ -249,10 +249,29 @@ def _task_node(run_id: str, name: str, kind: str, module: ModuleSpec | None, dep
     )
 
 
+def _is_test_only(module: ModuleSpec) -> bool:
+    files = [f.replace("\\", "/") for f in module.files]
+    return bool(files) and all(f.startswith("tests/") or f.rsplit("/", 1)[-1].startswith("test_") for f in files)
+
+
+def _without_test_modules(plan: PlanModel) -> PlanModel:
+    """Acceptance tests are authored for every module before its worker runs, so a module whose files are tests would make a 7B worker
+    rewrite them (it answered 'blocked' on every attempt and the run stalled). Its requirement ids move to the last real module."""
+    tests = [m for m in plan.modules if _is_test_only(m)]
+    real = [m for m in plan.modules if not _is_test_only(m)]
+    if not tests or not real:
+        return plan
+    gone = {m.name for m in tests}
+    moved = [rid for m in tests for rid in m.covers]
+    kept = [m.model_copy(update={"deps": [d for d in m.deps if d not in gone]}) for m in real]
+    kept[-1] = kept[-1].model_copy(update={"covers": [*kept[-1].covers, *[r for r in moved if r not in kept[-1].covers]]})
+    return plan.model_copy(update={"modules": kept})
+
+
 def _node_emit(state: PlannerState) -> dict[str, Any]:
     run_id = state["run_id"]
     request = StructuredRequest.model_validate(state["request"])
-    plan = PlanModel.model_validate(state["plan"])
+    plan = _without_test_modules(PlanModel.model_validate(state["plan"]))
     registry: ContractRegistry | None = _dependency("registry")
 
     contract_ids: list[str] = []
