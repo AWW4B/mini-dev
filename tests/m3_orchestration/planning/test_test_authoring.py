@@ -209,3 +209,21 @@ def test_the_author_is_told_the_import_line_and_the_pinned_contract_and_gets_a_r
     prompt = gateway.prompts[0]
     assert "from wordfreq.core import <name from the contract>" in prompt and "top_words(text: str, n: int = 3)" in prompt
     assert "sys.path.insert" in (tmp_path / "conftest.py").read_text(encoding="utf-8")
+
+
+def test_a_doubly_escaped_one_line_test_file_gets_its_line_breaks_back(tmp_path: Path) -> None:
+    """gpt-oss answered through tool calling with 'import pytest\\nfrom pkg import f\\n...' as one line: collection failed on every attempt."""
+    one_line = "import pytest\\nfrom pkg import f\\n\\ndef test_a():\\n    assert f() == 1\\n"
+    gateway = _Gateway({"tests/test_refund.py": one_line})
+    paths = _author(tmp_path, gateway)
+    written = (tmp_path / paths[0]).read_text(encoding="utf-8")
+    assert written.splitlines()[0] == "import pytest" and "def test_a():" in written.splitlines()
+
+
+def test_a_test_file_that_does_not_compile_is_re_asked_with_the_error(tmp_path: Path) -> None:
+    broken = {"tests/test_refund.py": "def test_a(:\n    pass\n"}
+    fixed = {"tests/test_refund.py": "def test_a():\n    pass\n"}
+    gateway = _Sequence(broken, fixed)
+    assert _author(tmp_path, gateway) == ["tests/test_refund.py"]
+    assert "do not compile" in gateway.prompts[1] and "SyntaxError" in gateway.prompts[1]
+    assert (tmp_path / "tests" / "test_refund.py").read_text(encoding="utf-8").startswith("def test_a():")
