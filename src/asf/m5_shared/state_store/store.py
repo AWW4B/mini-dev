@@ -117,8 +117,12 @@ class StateStore:
             return cls(conn, db_path, readonly=True)
 
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path), autocommit=False)
+        # IMMEDIATE, legacy transaction control: a SELECT no longer leaves a read snapshot open and a write waits for the lock instead of failing.
+        # With autocommit=False an earlier SELECT made the next write fail at once with "database is locked" as soon as another process
+        # (`factory inbox answer`, a second resume) had committed: a user answering a decision killed the run that was waiting for it.
+        conn = sqlite3.connect(str(db_path), timeout=30, isolation_level="IMMEDIATE")
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 30000;")
         migrate(conn)
         return cls(conn, db_path, readonly=False)
 
@@ -139,6 +143,8 @@ class StateStore:
         table, id_col = mapping
         now_iso = datetime.now(UTC).isoformat()
 
+        if not self.conn.in_transaction:
+            self.conn.execute("BEGIN IMMEDIATE")  # the version check and the write are one unit even against another process
         with self.conn:
             cur = self.conn.execute(
                 f"SELECT version, payload FROM {table} WHERE {id_col} = ?",  # noqa: S608
