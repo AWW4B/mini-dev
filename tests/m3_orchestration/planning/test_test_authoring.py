@@ -165,3 +165,22 @@ def test_a_re_ask_that_fixes_the_paths_is_used(tmp_path: Path) -> None:
     gateway = _Sequence({"src/wordfreq/core.py": "x = 1\n"}, {"tests/test_core.py": "def test_a(): ...\n"})
     assert _author(tmp_path, gateway) == ["tests/test_core.py"]
     assert len(gateway.prompts) == 2
+
+
+def test_the_prompt_names_the_test_files_to_write_after_the_modules_under_test(tmp_path: Path) -> None:
+    gateway = _Gateway()
+    _author(tmp_path, gateway)
+    assert "Use exactly these keys for the test files: tests/test_refund.py" in gateway.prompts[0]
+    assert "do not write or copy these" in gateway.prompts[0]
+
+
+def test_the_model_may_answer_with_a_list_of_path_and_content_objects(tmp_path: Path) -> None:
+    """The schema sent to the model is a list of {path, content}: a dict keyed by path made the planner model answer with the module under test."""
+    gateway = _Gateway()
+
+    class _ListModel:
+        def invoke(self, prompt: str) -> Any:
+            return {"files": [{"path": "tests/test_core.py", "content": "def test_a(): ...\n"}]}
+
+    gateway.model_for = lambda *a, **k: _ListModel()  # type: ignore[method-assign]
+    assert _author(tmp_path, gateway) == ["tests/test_core.py"]

@@ -45,8 +45,9 @@ _SKILL = "write-tests-from-acceptance"
 _PROMPT = (
     "Write pytest acceptance tests for this task. Test only what the acceptance criteria and the pinned contracts say, "
     "through the public interface; do not test implementation details. One file per module under tests/, named test_*.py. "
-    "Answer with JSON: {{\"files\": {{\"tests/<path>/test_<name>.py\": \"<complete file content>\"}}}}.\n\n"
-    "GOAL: {goal}\nACCEPTANCE CRITERIA: {criteria}\nCONTRACTS: {contracts}\nFILES UNDER TEST: {files}\n{context}\n{skill}"
+    "Answer with JSON: {{\"files\": [{{\"path\": \"tests/<path>/test_<name>.py\", \"content\": \"<complete file content>\"}}]}}.\n\n"
+    "GOAL: {goal}\nACCEPTANCE CRITERIA: {criteria}\nCONTRACTS: {contracts}\nFILES UNDER TEST (do not write or copy these; only test them): {files}\n"
+    "Use exactly these keys for the test files: {targets}\n{context}\n{skill}"
 )
 
 
@@ -54,7 +55,43 @@ class _TestFiles(BaseModel):
     files: dict[str, str]
 
 
+class _TestFile(BaseModel):
+    path: str
+    content: str
+
+
+class _TestFilesWire(BaseModel):
+    """What the model is asked to return. A list of {path, content} objects, not a dict keyed by path: with a free-form dict the
+    strict json_schema form is refused (400) and the tool-calling form made the planner model answer with the module under test
+    (key src/pkg/core.py, empty body) instead of tests, while a plain-text answer to the same prompt was correct."""
+
+    files: list[_TestFile]
+
+
+def _as_files(raw: Any) -> _TestFiles:
+    """Accept the wire model, a dict with a list of {path, content}, or the older dict keyed by path."""
+    files = raw.get("files") if isinstance(raw, dict) else getattr(raw, "files", None)
+    if isinstance(files, dict):
+        return _TestFiles(files={str(k): str(v) for k, v in files.items()})
+    collected: dict[str, str] = {}
+    for item in files or []:
+        path = item.get("path") if isinstance(item, dict) else getattr(item, "path", None)
+        content = item.get("content") if isinstance(item, dict) else getattr(item, "content", "")
+        if path:
+            collected[str(path)] = str(content or "")
+    return _TestFiles(files=collected)
+
+
 MAX_REASKS = 2
+
+
+def _target_names(node: TaskNode) -> list[str]:
+    """The test file names asked for: one tests/test_<module>.py per file under test.
+
+    Naming them stopped the planner model answering with the module under test (key src/pkg/core.py, body "# Placeholder") instead of tests.
+    """
+    names = [f"tests/test_{PurePosixPath(f.replace(chr(92), '/')).stem}.py" for f in node.allowed_files if PurePosixPath(f).suffix == ".py"]
+    return list(dict.fromkeys(names)) or ["tests/test_<name>.py"]
 
 
 def _is_safe_test_path(raw: str) -> bool:
@@ -104,14 +141,15 @@ def author_acceptance_tests(
         criteria="; ".join(node.acceptance_refs) or "(derive them from the goal)",
         contracts=", ".join(node.contract_refs) or "(none)",
         files=", ".join(node.allowed_files) or "(unspecified)",
+        targets=", ".join(_target_names(node)),
         context=context,
         skill=_skill_text(skills),
     )
 
     def draft(role: str, purpose: str, ask: str = prompt) -> _TestFiles:
-        model = gateway.model_for(cast(Any, role), purpose=purpose, output_schema=_TestFiles)
+        model = gateway.model_for(cast(Any, role), purpose=purpose, output_schema=_TestFilesWire)
         raw = model.invoke(ask)
-        return raw if isinstance(raw, _TestFiles) else _TestFiles.model_validate(raw if isinstance(raw, dict) else {"files": {}})
+        return _as_files(raw)
 
     role, purpose = "T3", "acceptance_tests"
     try:
