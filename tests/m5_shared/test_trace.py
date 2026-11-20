@@ -106,3 +106,18 @@ def test_a_log_record_raised_while_redacting_does_not_recurse(tmp_path: Path, mo
     trace_event("demo", "x", text="hello")
     logging.getLogger("asf.demo").warning("still fine")
     assert path.exists()
+
+
+def test_a_silent_process_gets_every_threads_stack_in_the_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The first hang had no clue in the log. After FACTORY_STALL_S seconds of silence the watchdog writes where each thread is."""
+    import time
+
+    import asf.m5_shared.trace as trace
+
+    monkeypatch.setattr(trace, "_STALL_S", 0.1)
+    monkeypatch.setattr(trace, "_POLL_S", 0.05)
+    path = start_trace(tmp_path, "r")
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and not any(r["component"] == "watchdog" for r in _lines(path)):
+        time.sleep(0.05)
+    assert any(r["component"] == "watchdog" and r["event"] == "stall" and r["data"]["threads"] for r in _lines(path))
