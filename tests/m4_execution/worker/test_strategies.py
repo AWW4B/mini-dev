@@ -285,3 +285,11 @@ def test_a_write_whose_content_has_raw_double_quotes_is_still_written(tmp_path: 
     name, args = next(call for call in executor.calls if call[0] == "write_file")
     assert args["rel_path"] == "src/billing.py"
     assert args["content"] == 'import sys\n\ndef f():\n    print(f"Error: {sys.argv}")\n    return 1\n'
+
+
+def test_a_later_step_of_one_file_sees_the_earlier_work_marked_as_its_own(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "billing.py").write_text("def first():\n    return 1\n", encoding="utf-8")
+    gateway = _Gateway({"action": "done", "message": "ok"})
+    _run("tool_loop", gateway, _Executor(), tmp_path, _spec(max_turns=3))
+    assert "src/billing.py (YOURS" in gateway.prompts[0] and "def first()" in gateway.prompts[0]

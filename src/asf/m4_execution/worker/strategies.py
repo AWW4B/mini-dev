@@ -243,15 +243,16 @@ def _existing_code(spec: LeafTaskSpec, worktree: str) -> str:
     budget = _EXISTING_CHARS
     for path in sorted((root / "src").rglob("*.py")) if (root / "src").is_dir() else []:
         rel = path.relative_to(root).as_posix()
-        if rel in own or path.name == "__init__.py" or budget <= 0:
+        if path.name == "__init__.py" or budget <= 0:
             continue
         try:
             text = path.read_text(encoding="utf-8")[:budget]
         except OSError:
             continue
         budget -= len(text)
-        parts.append(f"--- {rel}\n{text}")
-    return ("EXISTING CODE (already in the repository, verified; import from it, do not rewrite it):\n" + "\n".join(parts)) if parts else ""
+        note = " (YOURS: it already holds earlier work; add to it and keep every function that is there)" if rel in own else ""
+        parts.append(f"--- {rel}{note}\n{text}")
+    return ("EXISTING CODE (already in the repository, verified; import from it, do not rewrite what is not yours):\n" + "\n".join(parts)) if parts else ""
 
 
 def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executor: ToolExecutor, context: str) -> str:

@@ -40,11 +40,28 @@ def _cycle(children: list[TaskNode]) -> list[str]:
             deps.difference_update(free)
 
 
+def _ordered(children: list[TaskNode]) -> set[frozenset[str]]:
+    """Pairs of siblings where one depends (directly or through others) on the other: they run one after the other, never at the same time."""
+    direct = {str(c.id): {str(d) for d in c.deps} for c in children}
+    pairs: set[frozenset[str]] = set()
+    for start in direct:
+        seen: set[str] = set()
+        stack = list(direct[start])
+        while stack:
+            node = stack.pop()
+            if node in seen or node not in direct:
+                continue
+            seen.add(node)
+            pairs.add(frozenset((start, node)))
+            stack.extend(direct[node])
+    return pairs
+
+
 def validate_split(parent: TaskNode, proposal: SplitProposal, *, alpha: float = ALPHA) -> list[str]:
     """Return problems; empty means valid.
 
     Checks: shape and ids, coverage of the parent's acceptance, an acyclic dependency graph, disjoint file ownership (and
-    files inside the parent's), no duplicate children, and the progress rule S(child) <= alpha * S(parent) when sizes are set.
+    files inside the parent's; siblings may share a file only when one depends on the other), no duplicate children, and the progress rule S(child) <= alpha * S(parent) when sizes are set.
     """
     problems: list[str] = []
     children = proposal.children
@@ -73,12 +90,14 @@ def validate_split(parent: TaskNode, proposal: SplitProposal, *, alpha: float = 
 
     # file ownership: disjoint between children, and inside the parent's own files
     owner: dict[str, str] = {}
+    ordered = _ordered(children)
     parent_files = set(parent.allowed_files)
     for c in children:
         if not c.allowed_files:
             problems.append(f"child '{c.id}' owns no files")
         for f in c.allowed_files:
-            if f in owner and owner[f] != str(c.id):
+            # one file may be built up in steps (add a function, then the next) when the children that touch it run in sequence
+            if f in owner and owner[f] != str(c.id) and frozenset((owner[f], str(c.id))) not in ordered:
                 problems.append(f"file '{f}' is owned by both '{owner[f]}' and '{c.id}'")
             owner.setdefault(f, str(c.id))
             if parent_files and f not in parent_files:
