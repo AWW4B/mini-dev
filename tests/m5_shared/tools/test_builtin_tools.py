@@ -4,6 +4,7 @@
 # OWNS: Test cases for src/asf/m5_shared/tools/builtin_tools.py
 # DOES NOT OWN: Production code; fixtures shared with other modules (put those in tests/conftest.py)
 # CONNECTS TO (external boundaries only):
+#   - imports from src/asf/m5_shared/tools/registry.py: ToolRegistry (the local coder's permissions)
 #   - imports from src/asf/m5_shared/tools/builtin_tools.py: read_file, write_file, search_code, run_tests, run_linter, register_builtin_tools (unit under test)
 #   - imports from tests/conftest.py: fake_paths (shared fixtures)
 #   - emits/consumes: none
