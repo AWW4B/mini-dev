@@ -213,3 +213,15 @@ def test_the_acceptance_test_source_is_in_front_of_the_worker(tmp_path: Path) ->
     gateway = _Gateway({"action": "tool", "tool": "run_tests", "args": {}}, {"action": "done", "message": "ok"})
     _run("tool_loop", gateway, _Executor(), tmp_path, _spec(tests=("tests/test_billing.py",)))
     assert "ACCEPTANCE TEST SOURCE" in gateway.prompts[0] and "import top_words" in gateway.prompts[0]
+
+
+def test_run_tests_with_test_function_names_runs_the_tasks_own_test_files(tmp_path: Path) -> None:
+    """The 7B coder passed ['test_top_words_basic'] (names, not files): pytest exit 4, 'the tests cannot be found', task blocked."""
+    gateway = _Gateway(
+        {"action": "tool", "tool": "run_tests", "args": {"selectors": ["test_top_words_basic", "test_ties"]}},
+        {"action": "tool", "tool": "run_tests", "args": {"selectors": ["tests/test_other.py"]}},
+        {"action": "done", "message": "ok"},
+    )
+    executor = _Executor()
+    _run("tool_loop", gateway, executor, tmp_path, _spec(max_turns=5, tests=("tests/test_billing.py",)))
+    assert [args["selectors"] for name, args in executor.calls if name == "run_tests"] == [["tests/test_billing.py"], ["tests/test_other.py"]]

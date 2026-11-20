@@ -63,7 +63,7 @@ _SYSTEM = (
 _TOOL_SHAPE = (
     'Shapes: {"action": "tool", "tool": "<name>", "args": {...}} | {"action": "done", "message": "<self-report>"} | '
     '{"action": "blocked", "message": "<reason>"}. Tools: read_file(rel_path), write_file(rel_path, content), search_code(pattern), '
-    "run_tests(selectors: list of test ids), run_linter(files: list of paths)."
+    "run_tests(selectors: list of test FILE paths, for example [\"tests/test_core.py\"]; pass the ACCEPTANCE TESTS files), run_linter(files: list of paths)."
 )
 _FILES_SHAPE = (
     'Shape: {"action": "done", "message": "<self-report>", "files": {"<allowed path>": "<complete new file content>"}} '
@@ -111,6 +111,16 @@ def _repair_tool_step(step: dict[str, Any]) -> dict[str, Any]:
         args = step.get("args") if isinstance(step.get("args"), dict) else {k: v for k, v in step.items() if k not in ("action", "message", "tool")}
         return {"action": "tool", "tool": action, "args": args}
     return step
+
+
+def _test_selectors(spec: LeafTaskSpec, args: dict[str, Any]) -> dict[str, Any]:
+    """run_tests takes test file paths. The 7B coder passed test function names ("test_top_words_basic"): pytest answered exit 4 (file not
+    found), the coder reported the tests missing and blocked the task. Anything that is not a path to a test file becomes the task's own."""
+    given = args.get("selectors")
+    paths = [str(x) for x in given] if isinstance(given, list) else []
+    if paths and all(".py" in x for x in paths):
+        return args
+    return {**args, "selectors": list(spec.acceptance_test_refs)}
 
 
 def _model_text(gateway: ModelGateway, prompt: str) -> str:
@@ -235,6 +245,8 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
             results.append(None)
             continue
         args = step.get("args") if isinstance(step.get("args"), dict) else {}
+        if step["tool"] == "run_tests":
+            args = _test_selectors(spec, cast(dict[str, Any], args))
         calls.append(f"Turn {turn}: {step['tool']}({json.dumps(args)[:500]})")
         ran_tests = ran_tests or step["tool"] == "run_tests"
         results.append(_shaped_tool(policy, executor, spec, str(step["tool"]), cast(dict[str, Any], args), worktree))
