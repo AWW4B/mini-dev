@@ -32,15 +32,15 @@ kv_cache_type = "q8_0"       # llama-server KV cache precision (half the fp16 si
 flash_attn = true
 load_mode = "none"          # -lm: keeps weights out of system RAM once on the GPU (4.65 GB -> 0.78 GB measured)
 
-# free: local T1/T2 plus free-tier API keys only. T3 plans with Gemini (the largest free context), then Groq gpt-oss-120b, then
-# gpt-oss-20b. The reviewer starts on gpt-oss-20b (fast, low reasoning), then gpt-oss-120b, then Gemini. Groq limits are per
+# free: local T1/T2 plus free-tier API keys only. T3 plans with Groq gpt-oss-120b (0.5 s per call; Gemini took 20 to 110 s), then gpt-oss-20b, then Gemini
+# (the largest context, for prompts over Groq's 8K tokens per minute). The reviewer starts on gpt-oss-20b (fast, low reasoning), then gpt-oss-120b, then Gemini. Groq limits are per
 # model and per key (free tier: 30 requests/min, 1,000/day, 8K tokens/min, 200K tokens/day), so every model and key adds quota. Store several keys per provider (FACTORY_GROQ_API_KEY, FACTORY_GROQ_API_KEY_2 ... or one
 # comma separated value): when a key hits its limit the next key is used, then the next provider. Create the keys in
 # projects with no billing so a call can never be charged.
 [profiles.free.roles]
 T1 = { provider = "local", model = "qwen3-1.7b", base_url = "http://127.0.0.1:8081/v1", params = { temperature = 0.1, extra_body = { chat_template_kwargs = { enable_thinking = false } } } }
 T2 = { provider = "local", model = "qwen2.5-coder-7b", base_url = "http://127.0.0.1:8082/v1", params = { temperature = 0.1 } }
-T3 = { provider = "gemini", fallbacks = [{ provider = "groq", model = "openai/gpt-oss-120b", reasoning_effort = "medium" }, { provider = "groq", model = "openai/gpt-oss-20b", reasoning_effort = "medium" }] }
+T3 = { provider = "groq", model = "openai/gpt-oss-120b", reasoning_effort = "medium", fallbacks = [{ provider = "groq", model = "openai/gpt-oss-20b", reasoning_effort = "medium" }, "gemini"] }
 reviewer = { provider = "groq", model = "openai/gpt-oss-20b", reasoning_effort = "low", fallbacks = [{ provider = "groq", model = "openai/gpt-oss-120b", reasoning_effort = "low" }, "gemini"] }
 
 [profiles.local-only.roles]
