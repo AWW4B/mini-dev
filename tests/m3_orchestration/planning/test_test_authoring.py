@@ -227,3 +227,16 @@ def test_a_test_file_that_does_not_compile_is_re_asked_with_the_error(tmp_path: 
     assert _author(tmp_path, gateway) == ["tests/test_refund.py"]
     assert "do not compile" in gateway.prompts[1] and "SyntaxError" in gateway.prompts[1]
     assert (tmp_path / "tests" / "test_refund.py").read_text(encoding="utf-8").startswith("def test_a():")
+
+
+def test_a_task_of_non_code_files_gets_a_deterministic_test_and_no_model_call(tmp_path: Path) -> None:
+    """A model asked for tests of pyproject.toml invented a Poetry layout; no worker could pass them and the run replanned in circles."""
+    node = TaskNode.model_validate(
+        {"id": "t2", "run_id": "r1", "kind": "leaf", "goal": "package it", "idempotency_key": "k2", "acceptance_refs": ["REQ-004 console script"], "allowed_files": ["pyproject.toml"]}
+    )
+    gateway = _Gateway()
+    paths = author_acceptance_tests(node, False, gateway=gateway, project_root=tmp_path)  # type: ignore[arg-type]
+    assert paths == ["tests/test_pyproject_present.py"] and gateway.calls == []
+    text = (tmp_path / paths[0]).read_text(encoding="utf-8")
+    assert text.startswith("# REQ-004") and "'pyproject.toml'" in text
+    compile(text, paths[0], "exec")

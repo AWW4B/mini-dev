@@ -27,6 +27,7 @@
 # DONE WHEN: (1) tests/m3_orchestration/planning/test_test_authoring.py passes on Windows and Linux. (2) `uv run python scripts/check_headers.py` reports no problem for this file. (3) `uv run ruff check src/asf/m3_orchestration/planning/test_authoring.py` and `uv run mypy src/asf/m3_orchestration/planning/test_authoring.py` are clean.
 
 import logging
+import re
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
@@ -97,6 +98,54 @@ def _target_names(node: TaskNode) -> list[str]:
     # a file that is already a test (tests/test_core.py) is what a worker writes, not a module under test: no tests/test_test_core.py
     names = [f"tests/test_{m.stem}.py" for m in modules if m.suffix == ".py" and m.parts[0] != "tests" and not m.stem.startswith("test_")]
     return list(dict.fromkeys(names)) or ["tests/test_<name>.py"]
+
+
+_REQ_ID = re.compile(r"REQ-\d+")
+
+_FILE_TEST = """# {ids}
+import json
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+FILES = {files!r}
+
+
+def test_the_files_exist_and_are_not_empty():
+    for name in FILES:
+        path = ROOT / name
+        assert path.is_file(), name
+        assert path.read_text(encoding="utf-8").strip(), name
+
+
+def test_data_files_are_well_formed():
+    for name in FILES:
+        text = (ROOT / name).read_text(encoding="utf-8")
+        if name.endswith(".toml"):
+            tomllib.loads(text)
+        elif name.endswith(".json"):
+            json.loads(text)
+"""
+
+
+def _is_code_module(raw: str) -> bool:
+    path = PurePosixPath(raw.replace(chr(92), "/"))
+    return path.suffix == ".py" and path.name != "__init__.py" and path.parts[0] != "tests" and not path.stem.startswith("test_")
+
+
+def _file_presence_test(node: TaskNode, project_root: Path) -> list[str]:
+    """A task whose files are not code (pyproject.toml, README.md, docs) gets a deterministic presence-and-syntax test, written without a model.
+
+    A model asked for tests of pyproject.toml invented a Poetry layout and a 'title' field nobody asked for; no worker could pass it and
+    the run replanned the task a dozen times."""
+    files = [f.replace(chr(92), "/") for f in node.allowed_files]
+    ids = sorted({m for line in node.acceptance_refs for m in _REQ_ID.findall(line)})
+    stem = PurePosixPath(files[0]).stem.strip(".") or "files"
+    rel = f"tests/test_{stem}_present.py"
+    target = project_root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_FILE_TEST.format(ids=" ".join(ids) or "no requirement id", files=files), encoding="utf-8")
+    return [rel]
 
 
 def _import_lines(node: TaskNode) -> list[str]:
@@ -190,6 +239,9 @@ def author_acceptance_tests(
     draft needs the user's APPROVE_LOCAL_TESTS answer first: the request goes to the DecisionBroker and ApprovalRequired is
     raised; call again with ``local_approved=True`` once it is granted.
     """
+    if node.allowed_files and not any(_is_code_module(f) for f in node.allowed_files):
+        _ensure_conftest(project_root)
+        return _file_presence_test(node, project_root)
     prompt = _PROMPT.format(
         goal=node.goal,
         criteria="; ".join(node.acceptance_refs) or "(derive them from the goal)",
