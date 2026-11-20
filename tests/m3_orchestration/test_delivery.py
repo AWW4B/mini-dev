@@ -68,3 +68,26 @@ def test_a_run_that_never_created_tasks_is_not_reported_as_all_verified(tmp_path
     conn.close()
     text = build_report(tmp_path)
     assert "every task is verified" not in text and "did not finish (status FAILED)" in text and "No task was ever created" in text
+
+
+def test_the_same_test_failing_for_the_helpers_too_marks_the_test_as_suspect(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    digest = "ab" * 32
+    blob = project / ".asf_blobs" / digest[:2] / digest[2:]
+    blob.parent.mkdir(parents=True)
+    blob.write_text("FAILED tests/test_cli.py::test_format - AssertionError\n", encoding="utf-8")
+    rows = [
+        {"event": "helper_model", "task_id": "t-core", "data": {"task": "t-core"}},
+        *({"event": "attempt_end", "task_id": "t-core", "data": {"task": "t-core", "result": "Requeue", "detail": f"evidence_ref='sha256:{digest}'"}} for _ in range(2)),
+    ]
+    (project / ".factory" / "logs" / "trace.jsonl").write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    text = build_report(project)
+    assert "the test is suspect" in text and "test_format" in text
+
+
+def test_logs_and_autopilot_output_stay_out_of_the_archive(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    (project / "autopilot_out.txt").write_text("x", encoding="utf-8")
+    (project / "servers.log").write_text("x", encoding="utf-8")
+    _, archive = write_delivery(project)
+    assert not {"autopilot_out.txt", "servers.log"} & set(zipfile.ZipFile(archive).namelist())

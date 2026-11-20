@@ -16,6 +16,7 @@
 #   - called by src/asf/m4_execution/worker/worker_graph.py: run_strategy, WorkerStrategyName
 #   - called by tests/m4_execution/worker/test_strategies.py: run_strategy, WorkerStrategyName, WorkerBlocked, WorkerFormatError
 #   - imports from src/asf/m5_shared/trace.py: trace_event (every worker turn and tool result)
+#   - imports from src/asf/m5_shared/stack.py: find_stack, stack_prompt (the binding tech stack in every prompt)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -42,6 +43,7 @@ from asf.m5_shared.context.compaction import compact_history
 from asf.m5_shared.gateway.gateway import ModelGateway
 from asf.m5_shared.memory.device_budget import load_memory_config
 from asf.m5_shared.memory.tool_outputs import ShapedOutput, ToolOutputPolicy
+from asf.m5_shared.stack import find_stack, stack_prompt
 from asf.m5_shared.tools.codeexec.runner import execute_code
 from asf.m5_shared.tools.executor import ToolExecutor
 from asf.m5_shared.trace import trace_event
@@ -58,14 +60,15 @@ _MODEL_ROLE: ContextVar[str] = ContextVar("asf_worker_model_role", default="T2")
 
 _SYSTEM = (
     "You are a coding worker. Work only on the files listed under ALLOWED FILES; writes anywhere else are denied. "
-    "Reply with ONE JSON object and nothing else.\n"
+    "Reply with ONE JSON object. To write a file, put the JSON on its own line WITHOUT a content field and the COMPLETE file right after it "
+    "in one fenced code block (```python ... ```); never put file content inside JSON strings.\n"
     "{shape}\n"
     "Use done when the task is complete, blocked only when you tried and cannot proceed (a real gap in the contract). "
     "The modules under DEPENDENCY CONTRACTS already exist: import them by those signatures and never write them again. Create every ALLOWED FILE that does not exist yet."
 )
 _TOOL_SHAPE = (
     'Shapes: {"action": "tool", "tool": "<name>", "args": {...}} | {"action": "done", "message": "<self-report>"} | '
-    '{"action": "blocked", "message": "<reason>"}. Tools: read_file(rel_path), write_file(rel_path, content), search_code(pattern), '
+    '{"action": "blocked", "message": "<reason>"}. Tools: read_file(rel_path), write_file(rel_path) followed by the fenced file, search_code(pattern), '
     "run_tests(selectors: list of test FILE paths, for example [\"tests/test_core.py\"]; pass the ACCEPTANCE TESTS files), run_linter(files: list of paths)."
 )
 _FILES_SHAPE = (
@@ -107,7 +110,29 @@ def _salvage_write(text: str) -> dict[str, Any] | None:
     return {"action": "tool", "tool": "write_file", "args": {"rel_path": path.group(1), "content": raw}}
 
 
+_FENCE = re.compile(r"```([A-Za-z0-9_+.-]*)[ \t]*\n(.*?)\n?```", re.DOTALL)
+
+
+def _fenced_write(text: str) -> dict[str, Any] | None:
+    """write_file whose content follows the JSON in a fenced block (the aider "whole" edit format).
+
+    Code inside JSON strings is where small models fail: raw quotes, bad escapes, a stray '"}' left in the file. aider measured the same
+    for large models (https://aider.chat/2024/08/14/code-in-json.html). The content is taken verbatim from the fence, no unescaping."""
+    if '"write_file"' not in text:
+        return None
+    path = _WRITE_PATH.search(text)
+    blocks = [(lang.lower(), body) for lang, body in _FENCE.findall(text)]
+    code = [body for lang, body in blocks if lang != "json" and '"action"' not in body]
+    if path is None or not code:
+        return None
+    content = code[-1]
+    return {"action": "tool", "tool": "write_file", "args": {"rel_path": path.group(1), "content": content if content.endswith("\n") else content + "\n"}}
+
+
 def _extract_json(text: str) -> dict[str, Any]:
+    fenced = _fenced_write(text)
+    if fenced is not None:
+        return fenced
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end < start:
         raise ValueError("no JSON object found in the reply")
@@ -419,6 +444,8 @@ def run_strategy(
         chosen = "tool_loop"
     if chosen not in _STRATEGIES:
         raise ValueError(f"unknown worker strategy '{name}'")
+    stack = stack_prompt(find_stack(Path(worktree)))
+    context = f"{stack}\n\n{context}" if stack else context
     token = _MODEL_ROLE.set(model_role or "T2")
     try:
         return _STRATEGIES[chosen](spec, worktree, gateway, executor, context)

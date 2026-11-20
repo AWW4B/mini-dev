@@ -318,3 +318,15 @@ def test_a_salvaged_write_does_not_keep_the_json_tail_in_the_file(tmp_path: Path
     _run("tool_loop", gateway, executor, tmp_path, _spec(max_turns=4))
     args = next(call[1] for call in executor.calls if call[0] == "write_file")
     assert args["content"].endswith("\n") and not args["content"].rstrip().endswith("}") and "def f():" in args["content"]
+
+
+def test_a_file_in_a_fenced_block_after_the_json_is_written_verbatim(tmp_path: Path) -> None:
+    """The coder writes the file after the JSON in a fence (aider's whole format): no escaping, so quotes and backslashes survive."""
+    fence = chr(96) * 3
+    body = 'import re\n\ndef f():\n    print(f"E: {re.escape(chr(92))}")\n'
+    reply = fence + 'json\n{"action": "tool", "tool": "write_file", "args": {"rel_path": "src/billing.py"}}\n' + fence + "\n" + fence + "python\n" + body + fence
+    gateway = _Gateway(reply, {"action": "done", "message": "ok"})
+    executor = _Executor()
+    _run("tool_loop", gateway, executor, tmp_path, _spec(max_turns=4))
+    args = next(call[1] for call in executor.calls if call[0] == "write_file")
+    assert args == {"rel_path": "src/billing.py", "content": body}

@@ -277,3 +277,22 @@ def test_a_tiny_task_is_a_leaf_even_when_the_rubric_scores_it_risky(tmp_path: Pa
     gateway = _Gateway({}, ambiguity=0.8)
     out = _run(_plan(_node("run1-tiny")), tmp_path, gateway, scheduler=scheduler)
     assert out["leaves"] == ["run1-tiny"] and gateway.split_calls == []
+
+
+def test_a_tiny_task_that_failed_every_attempt_is_not_split_again_but_put_to_the_decider(tmp_path: Path) -> None:
+    frontier, broker = Frontier("run1"), _Broker()
+    seen: dict[str, Any] = {}
+    original = frontier.update
+
+    def spy(node: Any) -> None:
+        seen[str(node.id)] = node
+        original(node)
+
+    frontier.update = spy  # type: ignore[method-assign]
+    plan = _plan(_node("run1-tiny"))
+    _run(plan, tmp_path, _Gateway(), frontier=frontier, decision_broker=broker)
+    frontier.get = lambda node_id: seen[node_id]  # type: ignore[method-assign]
+    gateway = _Gateway()
+    config: Any = {"configurable": {"frontier": frontier, "profile": PROFILE, "gateway": gateway, "scheduler": _Scheduler(), "decision_broker": broker}}
+    out = build_decomposition_graph(None).invoke({"plan": plan, "seeded": True, "resplit": {"run1-tiny": "failed"}, "requirement_ids": []}, config)
+    assert "run1-tiny" in out["suspended"] and gateway.split_calls == [] and broker.requests[-1].kind == "escalation"
