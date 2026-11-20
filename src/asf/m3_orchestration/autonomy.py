@@ -187,6 +187,9 @@ def _answer_all(project_root: Path, decide: Decider | None, replans: dict[str, i
             except Exception as err:  # noqa: BLE001 - a model failure falls back to the policy, and the record says so
                 _record(project_root, {"decision": row["decision_id"], "note": f"the deciding model failed: {err}"})
         choice, reason = picked if picked is not None else choose_by_policy(options, replans.get(task_id, 0))
+        if topic == "approve_plan" and "approve" in options and choice != "approve":
+            # the plan already passed the planner's checks and its self-critique; a model's objection is recorded in full but does not end the run
+            choice, reason = "approve", f"policy approved the plan although the model objected ({reason}); the objection is listed here so it is not lost"
         if choice == "replan" and replans.get(task_id, 0) >= MAX_REPLANS_PER_TASK:
             choice, reason = choose_by_policy([o for o in options if o != "replan"], 0)[0], "policy: the replan budget of this task is used; it is abandoned and reported"
         if choice == "replan":

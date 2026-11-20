@@ -55,3 +55,16 @@ def test_the_archive_holds_the_project_and_the_report_but_no_secrets_or_run_data
     report, archive = write_delivery(_project(tmp_path))
     names = set(zipfile.ZipFile(archive).namelist())
     assert names == {"src/core.py", "REPORT.md"} and report.is_file()
+
+
+def test_a_run_that_never_created_tasks_is_not_reported_as_all_verified(tmp_path: Path) -> None:
+    """The first real autopilot run ended on a rejected plan and the report said 'None: every task is verified'."""
+    (tmp_path / ".factory").mkdir()
+    conn = sqlite3.connect(tmp_path / ".factory" / "state.db")
+    conn.execute("CREATE TABLE tasks (task_id TEXT, state TEXT, title TEXT, created_at TEXT)")
+    conn.execute("CREATE TABLE runs (run_id TEXT, status TEXT)")
+    conn.execute("INSERT INTO runs VALUES ('r1', 'FAILED')")
+    conn.commit()
+    conn.close()
+    text = build_report(tmp_path)
+    assert "every task is verified" not in text and "did not finish (status FAILED)" in text and "No task was ever created" in text

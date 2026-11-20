@@ -118,11 +118,26 @@ def _decisions_section(project_root: Path) -> list[str]:
     return [*lines, ""]
 
 
+def _run_status(project_root: Path) -> str:
+    db = project_root / ".factory" / "state.db"
+    if not db.is_file():
+        return "unknown (no state database)"
+    conn = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=10)
+    try:
+        row = conn.execute("SELECT status FROM runs ORDER BY rowid DESC LIMIT 1").fetchone()
+    except sqlite3.Error:
+        return "unknown"
+    finally:
+        conn.close()
+    return str(row[0]) if row else "no run was started"
+
+
 def build_report(project_root: Path) -> str:
     """The REPORT.md text: a table of every task, then each problem with its evidence, cause and probable fix."""
     tasks = _tasks(project_root)
     rows = _trace(project_root)
-    lines = ["# Delivery report", "", "## Tasks", "", "| task | state | attempts | bigger model used |", "|---|---|---|---|"]
+    status = _run_status(project_root)
+    lines = ["# Delivery report", "", f"Run status: **{status}**", "", "## Tasks", "", "| task | state | attempts | bigger model used |", "|---|---|---|---|"]
     problems: list[tuple[str, str, dict[str, Any]]] = []
     for task_id, state, _title in tasks:
         facts = _facts(task_id, rows)
@@ -131,8 +146,13 @@ def build_report(project_root: Path) -> str:
             problems.append((task_id, state, facts))
     done = sum(1 for _, state, _ in tasks if state in ("VERIFIED", "INTEGRATED"))
     lines += ["", f"{done} of {len(tasks)} tasks are verified or integrated.", "", "## Problems", ""]
-    if not problems:
+    if status != "DONE":
+        lines.append(f"The run did not finish (status {status}); {len(tasks)} task(s) exist. Whatever is in the archive is partial.")
+        lines.append("")
+    if not problems and tasks and status == "DONE":
         lines.append("None: every task is verified.")
+    elif not problems and not tasks:
+        lines.append("No task was ever created: the run ended before work began (see the decisions below).")
     for task_id, state, facts in problems:
         cause, fix = _diagnosis(facts)
         lines += [f"### {task_id} ({state})", f"- Cause: {cause}", f"- Probable fix: {fix}"]
