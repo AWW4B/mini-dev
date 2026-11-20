@@ -62,13 +62,13 @@ class _Executor:
         return SimpleNamespace(status="ok" if self.ok else "denied", output="file contents" if self.ok else "outside allowed files")
 
 
-def _spec(max_turns: int = 4, wall_clock_s: int = 60) -> Any:
+def _spec(max_turns: int = 4, wall_clock_s: int = 60, tests: tuple[str, ...] = ()) -> Any:
     return SimpleNamespace(
         task_id="t1",
         goal="write src/billing.py",
         allowed_files=["src/billing.py"],
         read_only_files=[],
-        acceptance_test_refs=["tests/test_billing.py"],
+        acceptance_test_refs=list(tests),
         capsules=[SimpleNamespace(module_id="ledger", operation="record", lines=["record(entry) -> None", "raises LedgerError", "idempotent"])],
         step_budget=SimpleNamespace(max_turns=max_turns, wall_clock_s=wall_clock_s),
         context_budget_tokens=8192,
@@ -191,3 +191,25 @@ def test_a_tool_name_in_the_action_field_is_read_as_that_tool_call(tmp_path: Pat
         ("write_file", {"rel_path": "src/b2.py", "content": "x = 1\n"}),
     ]
     assert "invalid action" not in gateway.prompts[1]
+
+
+def test_done_is_refused_until_the_acceptance_tests_have_been_run(tmp_path: Path) -> None:
+    """Measured: the 7B coder wrote count_word_frequency() where the tests import top_words(), said done after one write and never ran a test."""
+    gateway = _Gateway(
+        {"action": "write_file", "rel_path": "src/billing.py", "content": "x = 1\n"},
+        {"action": "done", "message": "too early"},
+        {"action": "tool", "tool": "run_tests", "args": {"selectors": ["tests/test_billing.py"]}},
+        {"action": "done", "message": "tests pass"},
+    )
+    executor = _Executor()
+    assert "tests pass" in _run("tool_loop", gateway, executor, tmp_path, _spec(max_turns=6, tests=("tests/test_billing.py",)))
+    assert [name for name, _ in executor.calls] == ["write_file", "run_tests"]
+    assert "done was refused" in gateway.prompts[2]
+
+
+def test_the_acceptance_test_source_is_in_front_of_the_worker(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_billing.py").write_text("from billing import top_words\n", encoding="utf-8")
+    gateway = _Gateway({"action": "tool", "tool": "run_tests", "args": {}}, {"action": "done", "message": "ok"})
+    _run("tool_loop", gateway, _Executor(), tmp_path, _spec(tests=("tests/test_billing.py",)))
+    assert "ACCEPTANCE TEST SOURCE" in gateway.prompts[0] and "import top_words" in gateway.prompts[0]

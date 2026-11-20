@@ -177,8 +177,25 @@ def _policy(spec: LeafTaskSpec) -> ToolOutputPolicy:
     return ToolOutputPolicy(load_memory_config(), window_tokens=spec.context_budget_tokens)
 
 
+_ACCEPTANCE_CHARS = 6000
+
+
+def _acceptance_source(spec: LeafTaskSpec, worktree: str) -> str:
+    """The acceptance tests' source, put in front of the worker. The first real attempt saw only the test file names, never opened them
+    and wrote count_word_frequency() where the tests import top_words()."""
+    parts: list[str] = []
+    for ref in spec.acceptance_test_refs:
+        path = Path(worktree) / str(ref).split("::", 1)[0]
+        try:
+            parts.append(f"--- {ref}\n{path.read_text(encoding='utf-8')[:_ACCEPTANCE_CHARS]}")
+        except OSError:
+            continue
+    return ("ACCEPTANCE TEST SOURCE (your code must make these pass; use the names they import):\n" + "\n".join(parts)) if parts else ""
+
+
 def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executor: ToolExecutor, context: str) -> str:
-    header = _header(spec, context, _TOOL_SHAPE)
+    header = _header(spec, "\n\n".join(part for part in (context, _acceptance_source(spec, worktree)) if part), _TOOL_SHAPE)
+    ran_tests = False
     policy = _policy(spec)
     calls: list[str] = []  # "Turn n: tool(args)" or a note, one per turn
     results: list[ShapedOutput | None] = []
@@ -203,6 +220,10 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
         step = _repair_tool_step(_ask(gateway, text))
         action = step.get("action")
         if action == "done":
+            if spec.acceptance_test_refs and not ran_tests and turn < spec.step_budget.max_turns:
+                calls.append(f"Turn {turn}: done was refused: call run_tests on the acceptance tests and make them pass first.")
+                results.append(None)
+                continue
             return f"tool_loop finished in {turn} step(s): {step.get('message', '')}"
         if action == "blocked":
             raise _blocked(step)
@@ -212,6 +233,7 @@ def _tool_loop(spec: LeafTaskSpec, worktree: str, gateway: ModelGateway, executo
             continue
         args = step.get("args") if isinstance(step.get("args"), dict) else {}
         calls.append(f"Turn {turn}: {step['tool']}({json.dumps(args)[:500]})")
+        ran_tests = ran_tests or step["tool"] == "run_tests"
         results.append(_shaped_tool(policy, executor, spec, str(step["tool"]), cast(dict[str, Any], args), worktree))
     raise WorkerBlocked("SPEC_TOO_LARGE: the step budget was exhausted before the model reported done")
 
