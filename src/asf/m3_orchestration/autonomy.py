@@ -166,9 +166,53 @@ def drive(project_root: Path, spec_file: str, mode: str, profile: str, *, decide
         if after == before and after[1] == 0:
             _record(project_root, {"decision": "(run)", "by": "driver", "reason": "nothing changed in a full cycle; stopped and reported"})
             break
+    _spec_review(project_root, profile)
     report, archive = write_delivery(project_root)
     write_supervisor_notes(project_root, profile=profile)
     return report, archive
+
+
+_REVIEW_ROLE = (
+    "You are the acceptance reviewer of an automated software factory. Compare the delivered source files with the user's SPEC, line by line. "
+    "List only real deviations: something the spec states that the code does differently or not at all (an argument form, an output format, a "
+    "return code, a rule). Do not judge style. Reply with JSON only: "
+    '[{"requirement": "<id from the SPEC>", "file": "<path from SOURCES>", "deviation": "<one sentence>"}]; reply [] when there is none.'
+)
+
+
+def _spec_review(project_root: Path, profile: str, reviewer: Callable[[str], str] | None = None) -> Path | None:
+    """The bigger model checks the product against the spec's own words; code keeps only findings that cite a real requirement and file.
+
+    Run 7 reached DONE with every test green, yet cli.py wanted `--file PATH` where the spec says it takes a file path: the planner's contract
+    and the tests followed each other, not the spec. Nothing is changed here; the findings go into REPORT.md."""
+    spec_file = project_root / ".factory" / "requirements.json"
+    if not spec_file.is_file():
+        return None
+    spec: dict[str, str] = json.loads(spec_file.read_text(encoding="utf-8"))
+    sources = {p.relative_to(project_root).as_posix(): p.read_text(encoding="utf-8", errors="replace")[:6000] for p in sorted((project_root / "src").rglob("*.py"))} if (project_root / "src").is_dir() else {}
+    out = project_root / ".factory" / "deliver" / "spec_review.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    prompt = f"{_REVIEW_ROLE}\n\nSPEC:\n" + "\n".join(f"- {k}: {v}" for k, v in spec.items()) + "\n\nSOURCES:\n" + "\n".join(f"--- {k}\n{v}" for k, v in sources.items())
+    try:
+        if reviewer is None:
+            from asf.contracts.budget import RunBudget
+            from asf.m5_shared.gateway.gateway import ModelGateway
+
+            budget = RunBudget.model_validate({"run_id": "spec-review", "max_remote_tokens": 100_000, "max_local_tokens": 0, "max_api_spend": 1.0, "max_wall_clock_s": 600, "max_task_nodes": 1})
+            gateway = ModelGateway(profile or ModelGateway.default_profile_name(), budget)
+
+            def ask(text: str) -> str:
+                return str(getattr(gateway.model_for(cast(Any, "T3"), purpose="spec_review").invoke(text), "content", ""))
+
+            reviewer = ask
+        raw = reviewer(prompt)
+        items = json.loads(raw[raw.find("[") : raw.rfind("]") + 1])
+    except Exception as err:  # noqa: BLE001 - the report says the review could not be done; nothing is hidden
+        out.write_text(json.dumps({"error": f"{type(err).__name__}: {str(err)[:200]}"}), encoding="utf-8")
+        return out
+    kept = [i for i in items if isinstance(i, dict) and str(i.get("requirement")) in spec and str(i.get("file")) in sources and i.get("deviation")]
+    out.write_text(json.dumps({"findings": kept, "dropped": len(items) - len(kept)}, indent=1), encoding="utf-8")
+    return out
 
 
 def _answer_all(project_root: Path, decide: Decider | None, replans: dict[str, int], skip: tuple[str, ...] = ()) -> None:

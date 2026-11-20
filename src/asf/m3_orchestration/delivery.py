@@ -10,6 +10,7 @@
 #   - called by src/asf/m3_orchestration/autonomy.py: write_delivery
 #   - called by src/asf/m3_orchestration/supervisor.py: diagnose_project
 #   - reads <project>/.factory/deliver/decisions.jsonl written by src/asf/m3_orchestration/autonomy.py
+#   - reads <project>/.factory/deliver/spec_review.json written by src/asf/m3_orchestration/autonomy.py
 #   - called by tests/m3_orchestration/test_delivery.py: build_report, write_delivery
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -132,6 +133,25 @@ def diagnose_project(project_root: Path) -> list[tuple[str, str, str, str]]:
     return found
 
 
+def _spec_review_section(project_root: Path) -> list[str]:
+    """The bigger model's comparison of the product with the spec (each finding cites a real requirement and file), shown even when tests pass."""
+    path = project_root / ".factory" / "deliver" / "spec_review.json"
+    if not path.is_file():
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    lines = ["## Spec review (model-written; each finding cites a real requirement and file)", ""]
+    if "error" in data:
+        return [*lines, f"The review could not be done: {data['error']}", ""]
+    findings = data.get("findings", [])
+    if not findings:
+        lines.append("No deviation from the spec was found.")
+    for item in findings:
+        lines.append(f"- **{item['requirement']}** in `{item['file']}`: {item['deviation']}")
+    if data.get("dropped"):
+        lines.append(f"- {data['dropped']} finding(s) were dropped because they cited a requirement or file that does not exist.")
+    return [*lines, ""]
+
+
 def _decisions_section(project_root: Path) -> list[str]:
     """Every decision an unattended run took on its own: who took it and why. Nothing is answered silently."""
     path = project_root / ".factory" / "deliver" / "decisions.jsonl"
@@ -187,6 +207,7 @@ def build_report(project_root: Path) -> str:
         lines += [f"### {task_id} ({state})", f"- Cause: {cause}", f"- Probable fix: {fix}"]
         lines += [f"- Evidence: {item}" for item in [*facts["messages"][-3:], *facts["failures"][-2:], *facts["split_problems"][:2]]]
         lines.append("")
+    lines += _spec_review_section(project_root)
     lines += _decisions_section(project_root)
     lines += ["## What is in the archive", "", "The project files as they are now (no secrets, no run data). Tasks listed above as problems may be missing or incomplete.", ""]
     return "\n".join(lines)
