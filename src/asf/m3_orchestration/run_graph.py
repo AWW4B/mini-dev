@@ -39,7 +39,7 @@
 #   - called by src/asf/cli/commands/run.py: start_run, resume_run
 #   - called by tests/m3_orchestration/test_run_graph.py: build_run_graph, start_run, resume_run
 #   - called by tests/m3_orchestration/test_e2e.py: start_run
-#   - emits/consumes: emits RUN_STARTED, RUN_COMPLETED, emits narrative events TASK_RECEIVED, STEP_STARTED, HANDOFF_SENT, HANDOFF_RECEIVED (with causation_id set to the triggering event) via StateStore.commit
+#   - emits/consumes: emits RUN_STARTED, RUN_COMPLETED, emits narrative events TASK_RECEIVED, STEP_STARTED, HANDOFF_SENT, HANDOFF_RECEIVED, GATE_RESULT, DECISION_NEEDED (with causation_id set to the triggering event) via StateStore.commit
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
 #   2. Keep every public name and signature declared below exactly as written; they are the contract other files rely on.
@@ -93,6 +93,7 @@ MAX_REPLAN_ROUNDS = 2
 POLL_INTERVAL_S = 0.5
 _DONE_TASK_STATES = ("VERIFIED", "INTEGRATED")
 _FAILED_ROOT_STATES = ("ESCALATED", "ABANDONED", "CANCELLED")
+_AGENT_NAMES = {"planner": "Planner", "decomposer": "Decomposer", "worker": "Worker", "gate": "Gate", "integrator": "Integrator", "reviewer": "Reviewer"}
 
 Driver = Callable[[], dict[str, Any] | None]
 
@@ -128,6 +129,39 @@ def _event(run_id: str, kind: str, payload: dict[str, Any], task_id: str | None 
         "correlation_id": run_id,
         "payload": payload,
     }
+
+
+def _say(run_id: str, role: str, kind: str, payload: dict[str, Any], task_id: str | None = None, caused_by: str | None = None) -> str | None:
+    """Record one narrative event (who did what, hand-offs) for the web viewer and `factory trace`; returns its event id.
+
+    Narration is advisory: a failure to record it is logged and never stops the run. Main thread only (the state store is thread-bound).
+    """
+    store: StateStore | None = _dep("state_store")
+    if store is None:
+        return None
+    try:
+        event = _event(run_id, kind, payload, task_id)
+        event["actor"] = {"kind": "agent", "role": role, "name": _AGENT_NAMES.get(role, role.title())}
+        if caused_by:
+            event["causation_id"] = caused_by
+        row = store.conn.execute("SELECT version, status FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        if row is None:
+            return None
+        store.commit(
+            StateCommit.model_validate(
+                {"entity": "run", "entity_id": run_id, "expected_version": int(row["version"]), "mutation": {"status": row["status"]}, "events": [event]}
+            )
+        )
+        return str(event["event_id"])
+    except Exception:  # noqa: BLE001 - the story is an aid; the run goes on without a line of it
+        logger.warning("could not record a %s narrative event", kind, exc_info=True)
+        return None
+
+
+def _hand_off(run_id: str, sender: str, receiver: str, summary: str, task_id: str | None = None) -> None:
+    """A hand-off is a pair of events: the sender's HANDOFF_SENT and the receiver's HANDOFF_RECEIVED caused by it."""
+    sent = _say(run_id, sender, "handoff_sent", {"to_role": receiver, "summary": summary}, task_id)
+    _say(run_id, receiver, "handoff_received", {"summary": summary}, task_id, caused_by=sent)
 
 
 def _relay() -> None:
@@ -197,12 +231,18 @@ def _node_plan(state: RunState) -> dict[str, Any]:
     if state.get("untraced"):  # a re-plan covers only what the final acceptance found untraced
         wanted = set(state["untraced"])
         request = {**request, "requirements": [r for r in request["requirements"] if r["req_id"] in wanted]}
+    rid = state["run_id"]
+    goals = [str(r.get("text", "")).strip() for r in request.get("requirements", []) if str(r.get("text", "")).strip()]
+    _say(rid, "planner", "task_received", {"goal_summary": (goals[0] if goals else "the request") + f" (+{max(0, len(goals) - 1)} more requirements)", "from_role": "user"})
+    _say(rid, "planner", "step_started", {"step_no": 1, "strategy": "plan_then_verify", "summary": f"designing modules for {len(goals)} requirements"})
     planner = build_planner_graph(None)
     out = planner.invoke({"request": request, "run_id": f"{state['run_id']}-r{state.get('replan_rounds', 0)}" if state.get("untraced") else state["run_id"]}, get_config())
     approved = plan_result(out)
     if approved is None:
         _set_status(_dep("state_store"), state["run_id"], "CANCELLED", "run_completed", {"reason": "the plan was rejected"})
         return {"plan": None, "status": "CANCELLED", "note": "the plan was rejected"}
+    modules = [str(m.get("name", "?")) for m in (approved.model_dump(mode="json").get("modules") or [])]
+    _hand_off(rid, "planner", "decomposer", f"design plan approved: {', '.join(modules) or 'no modules'}")
     return {"plan": approved.model_dump(mode="json"), "status": "RUNNING"}
 
 
@@ -227,7 +267,52 @@ def _node_decompose(state: RunState) -> dict[str, Any]:
     out = graph.invoke({"plan": plan, "requirement_ids": [r.req_id for r in request.requirements]}, get_config())
     report = DecompositionReport.model_validate(out["report"])
     _dep("leaf_ids", set()).update(out.get("leaves", []))
+    rid = state["run_id"]
+    titles = {str(r["task_id"]): str(r["title"]) for r in store.conn.execute("SELECT task_id, title FROM tasks WHERE run_id = ?", (rid,))}
+    leaves = [str(x) for x in out.get("leaves", [])]
+    _say(rid, "decomposer", "step_started", {"step_no": 2, "strategy": "recursive_split", "summary": f"{len(titles)} tasks, {len(leaves)} ready for a worker"})
+    for leaf in leaves:
+        _hand_off(rid, "decomposer", "worker", titles.get(leaf, leaf)[:160], leaf)
+    for task_id in out.get("suspended", []) or []:
+        _say(rid, "decomposer", "decision_needed", {"kind": "clarify", "question": titles.get(str(task_id), str(task_id))[:200] + " needs an answer before it can be split"}, str(task_id))
     return {"decomposition": report.model_dump(mode="json")}
+
+
+_PROGRESS_LINES = {
+    "RUNNING": ("worker", "step_started", "working on"),
+    "VERIFYING": ("gate", "step_started", "verifying"),
+    "VERIFIED": ("gate", "gate_result", "passed"),
+    "FAILED_ATTEMPT": ("gate", "gate_result", "failed"),
+    "REPAIRING": ("integrator", "step_started", "repairing"),
+    "INTEGRATING": ("integrator", "step_started", "integrating"),
+    "INTEGRATED": ("integrator", "step_started", "integrated"),
+    "ESCALATED": ("worker", "decision_needed", "could not finish"),
+}
+
+
+def _narrate_progress(store: StateStore, run_id: str, seen: dict[str, str]) -> None:
+    """One narrative line per task whose state changed since the last look: the worker starts, the gate verdict, integration."""
+    try:
+        rows = store.conn.execute("SELECT task_id, state, title FROM tasks WHERE run_id = ?", (run_id,)).fetchall()
+    except Exception:  # noqa: BLE001 - narration only
+        return
+    for row in rows:
+        task_id, now = str(row["task_id"]), str(row["state"])
+        if seen.get(task_id) == now:
+            continue
+        seen[task_id] = now
+        line = _PROGRESS_LINES.get(now)
+        if line is None:
+            continue
+        role, kind, verb = line
+        title = str(row["title"])[:140]
+        if kind == "gate_result":
+            payload: dict[str, Any] = {"passed": now == "VERIFIED", "summary": title}
+        elif kind == "decision_needed":
+            payload = {"kind": "escalation", "question": f"{title} ({verb})"}
+        else:
+            payload = {"step_no": 1, "strategy": role, "summary": f"{verb} {title}"}
+        _say(run_id, role, kind, payload, task_id)
 
 
 def _root_state(store: StateStore, root_id: str) -> str | None:
@@ -246,6 +331,7 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
     sleep: Callable[[float], None] = _dep("sleep", time.sleep)
     max_ticks = _dep("max_ticks")
     ticks = 0
+    seen: dict[str, str] = {}
 
     while True:
         command = control() if control is not None else None
@@ -260,6 +346,7 @@ def _node_monitor(state: RunState) -> dict[str, Any]:
 
         requests = driver() if driver is not None else None
         _relay()
+        _narrate_progress(store, state["run_id"], seen)
         if requests and (requests.get("resplit") or requests.get("woken")):
             graph = build_decomposition_graph(None)
             out = graph.invoke({"plan": plan, "resplit": requests.get("resplit", {}), "requirement_ids": []}, get_config())
@@ -287,6 +374,7 @@ def _node_acceptance(state: RunState) -> dict[str, Any]:
     root = Path(state["project_root"])
     acceptance = _dep("acceptance") or final_acceptance
     result = acceptance(request, root, regression=_dep("regression"), blobs=_dep("blobs"))
+    _say(state["run_id"], "gate", "gate_result", {"passed": bool(result.passed), "summary": f"final acceptance, {len(result.untraced)} requirement(s) untraced"})
     return {"acceptance": result.model_dump(mode="json"), "untraced": list(result.untraced)}
 
 

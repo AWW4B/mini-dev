@@ -291,3 +291,19 @@ def test_outside_a_git_repository_only_planning_collaborators_are_built(tmp_path
     c = default_components(tmp_path, RUN, {"state_store": store, "blobs": BlobStore(tmp_path / "blobs")})
     assert "scheduler" not in c and "driver" not in c
     assert c["control"]() is None  # no commands queued
+
+
+def test_the_run_tells_its_story_as_paired_hand_offs_between_the_agents(tmp_path: Path) -> None:
+    """The web viewer and `factory trace` read these: planner to decomposer to worker, each hand-off sent and received."""
+    store = StateStore.open(tmp_path / "state.db")
+    over = _overrides(tmp_path, store, _Gateway({"modules": [_module("ledger", ["REQ-1"])]}), _Acceptance((True, [])))
+    start_run(_request(), tmp_path, over)
+
+    events = [json.loads(r["payload"]) for r in store.conn.execute("SELECT payload FROM outbox ORDER BY id")]
+    sent = [e for e in events if e["kind"] == "handoff_sent"]
+    assert [(e["actor"]["role"], e["payload"]["to_role"]) for e in sent] == [("planner", "decomposer"), ("decomposer", "worker")]
+    for hand_off in sent:
+        (received,) = [e for e in events if e["kind"] == "handoff_received" and e.get("causation_id") == hand_off["event_id"]]
+        assert received["actor"]["role"] == hand_off["payload"]["to_role"]
+    assert any(e["kind"] == "task_received" and e["actor"]["role"] == "planner" for e in events)
+    assert any(e["kind"] == "gate_result" and e["payload"]["passed"] for e in events)
