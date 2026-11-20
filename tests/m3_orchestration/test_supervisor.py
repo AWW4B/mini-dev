@@ -4,7 +4,7 @@
 # OWNS: Test cases for src/asf/m3_orchestration/supervisor.py
 # DOES NOT OWN: Production code; fixtures shared with other modules (put those in tests/conftest.py)
 # CONNECTS TO (external boundaries only):
-#   - imports from src/asf/m3_orchestration/supervisor.py: write_supervisor_notes (unit under test)
+#   - imports from src/asf/m3_orchestration/supervisor.py: write_supervisor_notes, _cited (unit under test)
 #   - emits/consumes: none
 # INSTRUCTIONS (strict, imperative):
 #   1. Implement only this file. If this file's contract with another file must change, stop and report; do not edit the other file.
@@ -62,3 +62,9 @@ def test_an_unreachable_agent_leaves_the_facts_and_says_so(tmp_path: Path) -> No
 
     notes = write_supervisor_notes(_project(tmp_path), analyst=broken).read_text(encoding="utf-8")
     assert "could not be reached" in notes and "Seen 1 time(s)" in notes
+
+
+def test_evidence_may_name_a_task_by_its_short_name() -> None:
+    from asf.m3_orchestration.supervisor import _cited
+
+    assert _cited("core", {"run_01X-core"}) and not _cited("payments", {"run_01X-core"})

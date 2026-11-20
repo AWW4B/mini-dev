@@ -74,6 +74,8 @@ class _Executor:
         return "B"
 
     def invoke(self, invocation: Any, allowed_files: list[str]) -> Any:
+        if invocation.tool != "write_file":  # the tests that run by themselves after a write
+            return SimpleNamespace(status="ok", output="(0, 'passed')")
         target = Path(invocation.workspace_dir) / invocation.args["rel_path"]
         target.write_text(invocation.args["content"], encoding="utf-8")
         return SimpleNamespace(status="ok", output="written")

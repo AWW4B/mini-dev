@@ -7,7 +7,8 @@
 #   - reads and writes <project>/.factory/stack.json
 #   - called by src/asf/m3_orchestration/run_graph.py: derive_stack, save_stack
 #   - called by src/asf/m4_execution/verification/gate.py: find_stack, foreign_imports
-#   - called by src/asf/m4_execution/worker/strategies.py: find_stack, stack_prompt
+#   - called by src/asf/m4_execution/worker/strategies.py: find_stack, stack_prompt, project_brief
+#   - reads <project>/.factory/requirements.json written by src/asf/m3_orchestration/run_graph.py
 #   - called by src/asf/m3_orchestration/planning/test_authoring.py: find_stack, stack_prompt
 #   - called by tests/m5_shared/test_stack.py: StackContract, derive_stack, save_stack, find_stack, stack_prompt, foreign_imports
 # INSTRUCTIONS (strict, imperative):
@@ -82,6 +83,17 @@ def stack_prompt(contract: StackContract | None) -> str:
         f"third-party libraries allowed: {libs}; command line parsing: {contract.cli}; tests: {contract.tests}; "
         f"layout: {'src/<package>/' if contract.layout == 'src' else 'flat'}. Do not use any other library or framework."
     )
+
+
+def project_brief(start: Path, limit: int = 1500) -> str:
+    """The user's own requirement texts (saved at run creation), so every agent knows what the whole project is."""
+    for folder in (start, *start.parents):
+        path = folder / ".factory" / "requirements.json"
+        if path.is_file():
+            texts: dict[str, str] = json.loads(path.read_text(encoding="utf-8"))
+            body = "\n".join(f"- {rid}: {text}" for rid, text in texts.items())
+            return f"THE PROJECT (the user's own words):\n{body[:limit]}"
+    return ""
 
 
 def foreign_imports(source: str, contract: StackContract, project_packages: set[str], *, is_test: bool = False) -> list[str]:
